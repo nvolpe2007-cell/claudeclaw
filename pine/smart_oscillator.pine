@@ -1,0 +1,201 @@
+//@version=5
+indicator("Smart Oscillator Pro", shorttitle="SmartOsc", overlay=false, precision=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+var string G_OSC  = "── Oscillator ──"
+var string G_DIV  = "── Divergence ──"
+var string G_LVL  = "── Levels ──"
+var string G_DISP = "── Display ──"
+
+// Oscillator
+i_rsiLen     = input.int(14,    "RSI Length",       minval=2,  group=G_OSC)
+i_smoothLen  = input.int(3,     "Signal Smooth",    minval=1, maxval=20, group=G_OSC)
+i_stochK     = input.int(14,    "Stoch K",          minval=2,  group=G_OSC)
+i_stochD     = input.int(3,     "Stoch D Smooth",   minval=1,  group=G_OSC)
+i_stochSmooth = input.int(3,    "Stoch Smooth",     minval=1,  group=G_OSC)
+i_composite  = input.bool(true, "RSI + StochRSI Composite", group=G_OSC)
+
+// Divergence
+i_showDiv    = input.bool(true, "Show Divergence",  group=G_DIV)
+i_showHidden = input.bool(true, "Show Hidden Div",  group=G_DIV)
+i_divLen     = input.int(5,     "Pivot Length",     minval=2, maxval=20, group=G_DIV)
+
+// Levels
+i_obLevel    = input.int(70,    "Overbought",       minval=55, maxval=95, group=G_LVL)
+i_osLevel    = input.int(30,    "Oversold",         minval=5,  maxval=45, group=G_LVL)
+i_dynLevels  = input.bool(true, "Dynamic OB/OS (BB on RSI)", group=G_LVL)
+i_bbLen      = input.int(20,    "BB Length",        minval=5,  group=G_LVL)
+i_bbMult     = input.float(1.5, "BB Multiplier",    step=0.1, minval=0.5, group=G_LVL)
+
+// Display
+i_showSignal = input.bool(true, "Signal Line",          group=G_DISP)
+i_showBg     = input.bool(true, "Trend Background",     group=G_DISP)
+i_showHisto  = input.bool(true, "Histogram (RSI–Signal)", group=G_DISP)
+i_colorBars  = input.bool(true, "Color Bars by State",  group=G_DISP)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OSCILLATOR
+// ═══════════════════════════════════════════════════════════════════════════════
+rsi = ta.rsi(close, i_rsiLen)
+
+// StochRSI (RSI-based stochastic)
+rsiLow    = ta.lowest(rsi,  i_stochK)
+rsiHigh   = ta.highest(rsi, i_stochK)
+stochRaw  = (rsi - rsiLow) / math.max(rsiHigh - rsiLow, 0.001) * 100
+stochK    = ta.sma(stochRaw, i_stochSmooth)
+stochD    = ta.sma(stochK,   i_stochD)
+
+// Composite: weighted average of RSI and StochK (scaled to 0–100)
+osc = i_composite ? (rsi * 0.6 + stochK * 0.4) : rsi
+
+// Signal line (EMA of osc)
+signal = ta.ema(osc, i_smoothLen)
+
+// Histogram
+histo = osc - signal
+
+// ── DYNAMIC LEVELS (Bollinger Bands on OSC) ────────────────────────────────
+oscSMA  = ta.sma(osc, i_bbLen)
+oscStdDev = ta.stdev(osc, i_bbLen)
+dynOB  = i_dynLevels ? oscSMA + oscStdDev * i_bbMult : float(i_obLevel)
+dynOS  = i_dynLevels ? oscSMA - oscStdDev * i_bbMult : float(i_osLevel)
+
+// Clamp to sensible range
+dynOB := math.min(math.max(dynOB, 55.0), 95.0)
+dynOS := math.max(math.min(dynOS, 45.0),  5.0)
+
+isOB = osc > dynOB
+isOS = osc < dynOS
+
+// ── TREND CONTEXT ─────────────────────────────────────────────────────────────
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+trendUp   = close > ema50 and ema50 > ema200
+trendDown = close < ema50 and ema50 < ema200
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DIVERGENCE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+// Strategy: read price and oscillator value AT the price pivot bar,
+// compare consecutive confirmed pivots.
+
+pPivH = ta.pivothigh(high, i_divLen, i_divLen)
+pPivL = ta.pivotlow(low,   i_divLen, i_divLen)
+
+var float prevPriceH = na
+var float prevOscH   = na
+var float prevPriceL = na
+var float prevOscL   = na
+
+var bool regBullDiv  = false
+var bool regBearDiv  = false
+var bool hidBullDiv  = false
+var bool hidBearDiv  = false
+
+regBullDiv := false
+regBearDiv := false
+hidBullDiv := false
+hidBearDiv := false
+
+if i_showDiv and not na(pPivH)
+    curPriceH = high[i_divLen]
+    curOscH   = osc[i_divLen]
+    if not na(prevPriceH)
+        // Regular bearish: price HH, osc LH
+        regBearDiv := curPriceH > prevPriceH and curOscH < prevOscH
+        // Hidden bearish: price LH, osc HH
+        hidBearDiv := i_showHidden and curPriceH < prevPriceH and curOscH > prevOscH
+    prevPriceH := curPriceH
+    prevOscH   := curOscH
+
+if i_showDiv and not na(pPivL)
+    curPriceL = low[i_divLen]
+    curOscL   = osc[i_divLen]
+    if not na(prevPriceL)
+        // Regular bullish: price LL, osc HL
+        regBullDiv := curPriceL < prevPriceL and curOscL > prevOscL
+        // Hidden bullish: price HL, osc LL
+        hidBullDiv := i_showHidden and curPriceL > prevPriceL and curOscL < prevOscL
+    prevPriceL := curPriceL
+    prevOscL   := curOscL
+
+// ── MICRO SIGNALS (crossovers) ─────────────────────────────────────────────
+crossUp   = ta.crossover(osc, signal)   and osc < 50
+crossDown = ta.crossunder(osc, signal)  and osc > 50
+exitOB    = ta.crossunder(osc, dynOB)
+exitOS    = ta.crossover(osc, dynOS)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  COLORS
+// ═══════════════════════════════════════════════════════════════════════════════
+oscColor = isOB  ? color.new(#EF5350, 10)  :
+           isOS  ? color.new(#26A69A, 10)  :
+           osc > signal ? color.new(#42A5F5, 20) : color.new(#AB47BC, 20)
+
+histoColor = histo > 0 and histo > histo[1] ? #26A69A :
+             histo > 0                       ? color.new(#26A69A, 40) :
+             histo < 0 and histo < histo[1]  ? #EF5350 :
+                                               color.new(#EF5350, 40)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Trend background
+bgcolor(i_showBg ? (trendUp ? color.new(#26A69A, 96) : trendDown ? color.new(#EF5350, 96) : na) : na)
+
+// Dynamic OB/OS bands
+obPlot = plot(dynOB, "OB Level",
+               color=color.new(#EF5350, 60), linewidth=1, style=plot.style_line)
+osPlot = plot(dynOS, "OS Level",
+               color=color.new(#26A69A, 60), linewidth=1, style=plot.style_line)
+fill(obPlot, plot(100, display=display.none), color=color.new(#EF5350, 94))
+fill(osPlot, plot(0,   display=display.none), color=color.new(#26A69A, 94))
+
+// Midline
+hline(50, "Midline", color=color.new(color.gray, 60), linestyle=hline.style_dotted)
+
+// Histogram
+plot(i_showHisto ? histo : na, "Histogram", style=plot.style_histogram,
+      color=histoColor, linewidth=2)
+
+// Main oscillator
+plot(osc, "Oscillator", color=oscColor, linewidth=2)
+
+// Signal line
+plot(i_showSignal ? signal : na, "Signal", color=color.new(color.orange, 20), linewidth=1)
+
+// Overbought/oversold dots
+plotshape(i_colorBars and exitOS, location=location.bottom, style=shape.circle,
+           color=color.new(#26A69A, 0), size=size.tiny)
+plotshape(i_colorBars and exitOB, location=location.top,    style=shape.circle,
+           color=color.new(#EF5350, 0), size=size.tiny)
+
+// Divergence markers (plotted at the pivot bar, offset backward)
+plotshape(regBullDiv, location=location.bottom, style=shape.labelup,
+           color=color.new(#26A69A, 20), textcolor=color.white,
+           text="D", size=size.tiny, offset=-i_divLen)
+plotshape(regBearDiv, location=location.top, style=shape.labeldown,
+           color=color.new(#EF5350, 20), textcolor=color.white,
+           text="D", size=size.tiny, offset=-i_divLen)
+plotshape(hidBullDiv, location=location.bottom, style=shape.labelup,
+           color=color.new(#00ACC1, 40), textcolor=color.white,
+           text="H", size=size.tiny, offset=-i_divLen)
+plotshape(hidBearDiv, location=location.top, style=shape.labeldown,
+           color=color.new(#FF7043, 40), textcolor=color.white,
+           text="H", size=size.tiny, offset=-i_divLen)
+
+// Crossover signals
+plotshape(crossUp,   location=location.bottom, style=shape.triangleup,
+           color=color.new(color.teal, 30), size=size.tiny)
+plotshape(crossDown, location=location.top,    style=shape.triangledown,
+           color=color.new(color.red, 30),  size=size.tiny)
+
+// ── ALERT CONDITIONS ──────────────────────────────────────────────────────────
+alertcondition(regBullDiv, title="Regular Bull Divergence", message="SmartOsc — Regular Bullish Divergence on {{ticker}}")
+alertcondition(regBearDiv, title="Regular Bear Divergence", message="SmartOsc — Regular Bearish Divergence on {{ticker}}")
+alertcondition(hidBullDiv, title="Hidden Bull Divergence",  message="SmartOsc — Hidden Bullish Divergence on {{ticker}}")
+alertcondition(hidBearDiv, title="Hidden Bear Divergence",  message="SmartOsc — Hidden Bearish Divergence on {{ticker}}")
+alertcondition(exitOS,     title="Exit Oversold",           message="SmartOsc — Exiting Oversold on {{ticker}}")
+alertcondition(exitOB,     title="Exit Overbought",         message="SmartOsc — Exiting Overbought on {{ticker}}")

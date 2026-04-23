@@ -1,0 +1,226 @@
+//@version=5
+indicator("Lux Signals Pro", shorttitle="LUX Sig", overlay=true, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+var string G_TREND  = "── Trend Filter ──"
+var string G_MOM    = "── Momentum Filter ──"
+var string G_SIG    = "── Signals ──"
+var string G_TP     = "── Risk / Reward ──"
+var string G_DISP   = "── Display ──"
+
+// Trend
+i_trendMode  = input.string("Supertrend", "Method", options=["Supertrend","EMA Cloud","Both"],group=G_TREND)
+i_stFactor   = input.float(3.0,  "ST Factor",       step=0.1, minval=0.5, group=G_TREND)
+i_stLen      = input.int(10,     "ST ATR Length",   minval=1, group=G_TREND)
+i_emaFast    = input.int(20,     "Fast EMA",        minval=1, group=G_TREND)
+i_emaSlow    = input.int(50,     "Slow EMA",        minval=1, group=G_TREND)
+i_emaTrend   = input.int(200,    "Trend EMA",       minval=1, group=G_TREND)
+
+// Momentum
+i_rsiLen     = input.int(14,     "RSI Length",      minval=2,  group=G_MOM)
+i_rsiOB      = input.int(70,     "RSI Overbought",  minval=50, maxval=90, group=G_MOM)
+i_rsiOS      = input.int(30,     "RSI Oversold",    minval=10, maxval=50, group=G_MOM)
+i_volFilter  = input.bool(false, "Volume Filter",   group=G_MOM)
+i_volMult    = input.float(1.2,  "Volume Threshold (×avg)", step=0.1, minval=1.0, group=G_MOM)
+
+// Signals
+i_sigMode    = input.string("Both",  "Signal Type", options=["Buy Only","Sell Only","Both"], group=G_SIG)
+i_minStrength = input.int(2,  "Min Signal Strength (1–3)", minval=1, maxval=3, group=G_SIG)
+
+// Risk/Reward
+i_showLevels = input.bool(true,  "Show SL / TP Lines", group=G_TP)
+i_slAtr      = input.float(1.5,  "SL (ATR mult)",      step=0.1, minval=0.1, group=G_TP)
+i_tp1Atr     = input.float(1.5,  "TP1 (ATR mult)",     step=0.1, minval=0.1, group=G_TP)
+i_tp2Atr     = input.float(3.0,  "TP2 (ATR mult)",     step=0.1, minval=0.1, group=G_TP)
+i_tp3Atr     = input.float(5.0,  "TP3 (ATR mult)",     step=0.1, minval=0.1, group=G_TP)
+
+// Display
+i_showTable  = input.bool(true,  "Signal Dashboard",   group=G_DISP)
+i_showCloud  = input.bool(true,  "EMA Cloud",          group=G_DISP)
+i_alertsOn   = input.bool(false, "Enable Alerts",      group=G_DISP)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CORE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+atr  = ta.atr(14)
+rsi  = ta.rsi(close, i_rsiLen)
+vol  = volume
+volAvg = ta.sma(vol, 20)
+
+// EMAs
+emaF = ta.ema(close, i_emaFast)
+emaS = ta.ema(close, i_emaSlow)
+emaT = ta.ema(close, i_emaTrend)
+emaBull = emaF > emaS and emaS > emaT
+emaBear = emaF < emaS and emaS < emaT
+
+// Supertrend
+[stLine, stDir] = ta.supertrend(i_stFactor, i_stLen)
+stBull = stDir == -1
+stBear = stDir ==  1
+
+// Consolidated trend booleans
+trendBull = switch i_trendMode
+    "Supertrend" => stBull
+    "EMA Cloud"  => emaBull
+    "Both"       => stBull and emaBull
+    => stBull
+
+trendBear = switch i_trendMode
+    "Supertrend" => stBear
+    "EMA Cloud"  => emaBear
+    "Both"       => stBear and emaBear
+    => stBear
+
+// Volume condition
+volOk = not i_volFilter or vol > volAvg * i_volMult
+
+// ── SIGNAL SCORING ────────────────────────────────────────────────────────────
+// Each condition adds 1 to the strength score (1–3)
+
+// Bullish scoring
+bullScore = 0
+// 1. Trend aligned
+bullScore += trendBull ? 1 : 0
+// 2. RSI coming out of oversold
+rsiRecovery = rsi > i_rsiOS and rsi[1] <= i_rsiOS
+bullScore += rsiRecovery or (rsi > 40 and rsi < 60) ? 1 : 0
+// 3. Price structure: HL near EMA or Supertrend support
+bullScore += (close > emaF and low[1] <= emaF * 1.002) ? 1 : 0
+
+// Bearish scoring
+bearScore = 0
+bearScore += trendBear ? 1 : 0
+rsiRejection = rsi < i_rsiOB and rsi[1] >= i_rsiOB
+bearScore += rsiRejection or (rsi < 60 and rsi > 40) ? 1 : 0
+bearScore += (close < emaF and high[1] >= emaF * 0.998) ? 1 : 0
+
+// Entry conditions
+// Crossover confirmation: close flips relative to key EMA
+entryBull = ta.crossover(close, emaF)  and trendBull and rsi > i_rsiOS and rsi < i_rsiOB and volOk
+entryBear = ta.crossunder(close, emaF) and trendBear and rsi < i_rsiOB and rsi > i_rsiOS and volOk
+
+// Supertrend flip as additional signal source
+stFlipBull = stBull and not stBull[1]
+stFlipBear = stBear and not stBear[1]
+
+entryBull := (entryBull or stFlipBull) and trendBull and volOk and rsi < i_rsiOB
+entryBear := (entryBear or stFlipBear) and trendBear and volOk and rsi > i_rsiOS
+
+// Strength filter
+buySignal  = entryBull and bullScore >= i_minStrength and (i_sigMode == "Buy Only"  or i_sigMode == "Both")
+sellSignal = entryBear and bearScore >= i_minStrength and (i_sigMode == "Sell Only" or i_sigMode == "Both")
+
+// ── TP / SL ───────────────────────────────────────────────────────────────────
+var float sigPrice = na
+var int   sigDir   = 0   // 1=long, -1=short
+
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+
+f_drawLevels(float entry, int dir) =>
+    sl   = entry - dir * atr * i_slAtr
+    tp1  = entry + dir * atr * i_tp1Atr
+    tp2  = entry + dir * atr * i_tp2Atr
+    tp3  = entry + dir * atr * i_tp3Atr
+    ext  = bar_index + 40
+
+    line.delete(slLine)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(tp3Line)
+
+    slLine  := line.new(bar_index, sl,  ext, sl,  color=color.new(#EF5350, 10), width=1, style=line.style_dashed)
+    tp1Line := line.new(bar_index, tp1, ext, tp1, color=color.new(#66BB6A, 40), width=1)
+    tp2Line := line.new(bar_index, tp2, ext, tp2, color=color.new(#66BB6A, 20), width=1)
+    tp3Line := line.new(bar_index, tp3, ext, tp3, color=color.new(#66BB6A, 0),  width=2)
+
+if buySignal
+    sigPrice := close
+    sigDir   := 1
+    if i_showLevels
+        f_drawLevels(close, 1)
+
+if sellSignal
+    sigPrice := close
+    sigDir   := -1
+    if i_showLevels
+        f_drawLevels(close, -1)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+// EMA Cloud
+c1 = plot(i_showCloud ? emaF : na, "Fast EMA",
+           color=emaBull ? color.new(#26A69A, 20) : color.new(#EF5350, 20), linewidth=1)
+c2 = plot(i_showCloud ? emaS : na, "Slow EMA",
+           color=emaBull ? color.new(#00796B, 20) : color.new(#C62828, 20), linewidth=1)
+fill(c1, c2, color=emaBull ? color.new(#26A69A, 92) : emaBear ? color.new(#EF5350, 92) : color.new(color.gray, 96))
+    plot(i_showCloud ? emaT : na, "Trend EMA", color=color.new(color.gray, 30), linewidth=2)
+
+// Supertrend
+stCol = stBull ? color.new(#26A69A, 0) : color.new(#EF5350, 0)
+plot(stLine, "Supertrend", color=stCol, linewidth=1, style=plot.style_stepline)
+
+// Signal shapes
+plotshape(buySignal,  location=location.belowbar, style=shape.labelup,
+           color=color.new(#00897B, 0), textcolor=color.white,
+           text="▲", size=size.small)
+plotshape(sellSignal, location=location.abovebar, style=shape.labeldown,
+           color=color.new(#C62828, 0), textcolor=color.white,
+           text="▼", size=size.small)
+
+// Strength labels (2 or 3 = strong signal)
+if buySignal and bullScore >= 2
+    label.new(bar_index, low - atr * 1.2,
+               bullScore == 3 ? "STRONG BUY" : "BUY",
+               style=label.style_label_up, color=color.new(#00897B, bullScore == 3 ? 20 : 50),
+               textcolor=color.white, size=bullScore == 3 ? size.small : size.tiny)
+
+if sellSignal and bearScore >= 2
+    label.new(bar_index, high + atr * 1.2,
+               bearScore == 3 ? "STRONG SELL" : "SELL",
+               style=label.style_label_down, color=color.new(#C62828, bearScore == 3 ? 20 : 50),
+               textcolor=color.white, size=bearScore == 3 ? size.small : size.tiny)
+
+// ── DASHBOARD TABLE ────────────────────────────────────────────────────────────
+if barstate.islast and i_showTable
+    tbl = table.new(position.top_right, 2, 7,
+                    bgcolor=color.new(color.black, 70), border_color=color.new(color.white, 80),
+                    border_width=1, frame_color=color.new(color.white, 60), frame_width=1)
+
+    trendStr   = trendBull ? "BULL ▲" : trendBear ? "BEAR ▼" : "NEUTRAL"
+    trendCol   = trendBull ? #26A69A : trendBear ? #EF5350 : color.gray
+    rsiStr     = str.tostring(math.round(rsi, 1))
+    rsiCol     = rsi > i_rsiOB ? #EF5350 : rsi < i_rsiOS ? #26A69A : color.silver
+    volStr     = vol > volAvg * i_volMult ? "HIGH ✓" : "normal"
+    volCol     = vol > volAvg * i_volMult ? #26A69A : color.gray
+    bStrStr    = str.tostring(bullScore) + " / 3"
+    sStrStr    = str.tostring(bearScore) + " / 3"
+    lastSig    = buySignal ? "BUY" : sellSignal ? "SELL" : sigDir == 1 ? "long" : sigDir == -1 ? "short" : "—"
+    lastSigCol = buySignal ? #26A69A : sellSignal ? #EF5350 : color.gray
+
+    table.cell(tbl, 0, 0, "Lux Signals Pro",       text_color=color.white,       text_size=size.small, bgcolor=color.new(color.navy, 40))
+    table.cell(tbl, 1, 0, "",                                                     text_size=size.small, bgcolor=color.new(color.navy, 40))
+    table.cell(tbl, 0, 1, "Trend",                  text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 1, trendStr,                 text_color=trendCol,          text_size=size.tiny)
+    table.cell(tbl, 0, 2, "RSI",                    text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 2, rsiStr,                   text_color=rsiCol,            text_size=size.tiny)
+    table.cell(tbl, 0, 3, "Volume",                 text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 3, volStr,                   text_color=volCol,            text_size=size.tiny)
+    table.cell(tbl, 0, 4, "Bull Strength",          text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 4, bStrStr,                  text_color=#26A69A,           text_size=size.tiny)
+    table.cell(tbl, 0, 5, "Bear Strength",          text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 5, sStrStr,                  text_color=#EF5350,           text_size=size.tiny)
+    table.cell(tbl, 0, 6, "Last Signal",            text_color=color.silver,      text_size=size.tiny)
+    table.cell(tbl, 1, 6, lastSig,                  text_color=lastSigCol,        text_size=size.tiny)
+
+// ── ALERTS ────────────────────────────────────────────────────────────────────
+alertcondition(buySignal,  title="Buy Signal",  message="Lux Signals Pro — BUY  {{ticker}} @ {{close}}")
+alertcondition(sellSignal, title="Sell Signal", message="Lux Signals Pro — SELL {{ticker}} @ {{close}}")
+alertcondition(buySignal and bullScore == 3,  title="Strong Buy",  message="Lux Signals Pro — STRONG BUY  {{ticker}} @ {{close}}")
+alertcondition(sellSignal and bearScore == 3, title="Strong Sell", message="Lux Signals Pro — STRONG SELL {{ticker}} @ {{close}}")

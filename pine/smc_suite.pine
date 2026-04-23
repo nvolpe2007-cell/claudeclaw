@@ -1,0 +1,305 @@
+//@version=5
+indicator("SMC Suite Pro", shorttitle="SMC Pro", overlay=true,
+          max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+var string G_STRUCT = "── Market Structure ──"
+var string G_OB     = "── Order Blocks ──"
+var string G_FVG    = "── Fair Value Gaps ──"
+var string G_LIQ    = "── Liquidity ──"
+var string G_TREND  = "── Trend ──"
+
+// Structure
+i_swingLen   = input.int(10,    "Swing Length",         minval=3, maxval=50, group=G_STRUCT)
+i_showBOS    = input.bool(true, "Show BOS Labels",      group=G_STRUCT)
+i_showCHoCH  = input.bool(true, "Show CHoCH Labels",    group=G_STRUCT)
+i_showPivots = input.bool(false,"Show Pivot Dots",      group=G_STRUCT)
+
+// Order Blocks
+i_showOB     = input.bool(true,  "Enable",                   group=G_OB)
+i_maxOB      = input.int(3,      "Max Visible (per side)",   minval=1, maxval=10, group=G_OB)
+i_obMitigate = input.bool(true,  "Remove on Mitigation",     group=G_OB)
+i_bullOB     = input.color(color.new(#00897B, 80), "Bullish Color", group=G_OB)
+i_bearOB     = input.color(color.new(#C62828, 80), "Bearish Color", group=G_OB)
+
+// Fair Value Gaps
+i_showFVG    = input.bool(true,  "Enable",              group=G_FVG)
+i_fvgMinAtr  = input.float(0.0,  "Min Size (ATR mult)", step=0.05, minval=0, group=G_FVG)
+i_bullFVG    = input.color(color.new(#43A047, 88), "Bullish Color", group=G_FVG)
+i_bearFVG    = input.color(color.new(#E65100, 88), "Bearish Color", group=G_FVG)
+
+// Liquidity
+i_showLiq    = input.bool(true,  "Equal Highs / Lows",  group=G_LIQ)
+i_liqLen     = input.int(20,     "Lookback",            minval=5, maxval=100, group=G_LIQ)
+i_eqPct      = input.float(0.1,  "Tolerance %",         step=0.05, minval=0.01, group=G_LIQ)
+
+// Trend
+i_showEMA    = input.bool(true,  "EMA Cloud",   group=G_TREND)
+i_ema1       = input.int(20,     "Fast EMA",    minval=1, group=G_TREND)
+i_ema2       = input.int(50,     "Mid EMA",     minval=1, group=G_TREND)
+i_ema3       = input.int(200,    "Slow EMA",    minval=1, group=G_TREND)
+i_showST     = input.bool(true,  "Supertrend",  group=G_TREND)
+i_stFactor   = input.float(3.0,  "ST Factor",   step=0.1, minval=0.5, group=G_TREND)
+i_stLen      = input.int(10,     "ST ATR Len",  minval=1, group=G_TREND)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CORE
+// ═══════════════════════════════════════════════════════════════════════════════
+atr = ta.atr(14)
+
+// EMAs
+ema1 = ta.ema(close, i_ema1)
+ema2 = ta.ema(close, i_ema2)
+ema3 = ta.ema(close, i_ema3)
+bullTrend = ema1 > ema2 and ema2 > ema3
+bearTrend = ema1 < ema2 and ema2 < ema3
+
+// Supertrend
+[stLine, stDir] = ta.supertrend(i_stFactor, i_stLen)
+
+// Pivot detection
+pivH = ta.pivothigh(high, i_swingLen, i_swingLen)
+pivL = ta.pivotlow(low,  i_swingLen, i_swingLen)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MARKET STRUCTURE (BOS / CHoCH)
+// ═══════════════════════════════════════════════════════════════════════════════
+var float lastSwingH = na
+var float lastSwingL = na
+var int   msBias     = 0   // 1 = bullish structure, -1 = bearish
+
+var bool bosUp    = false
+var bool bosDown  = false
+var bool chochUp  = false
+var bool chochDown = false
+
+bosUp    := false
+bosDown  := false
+chochUp  := false
+chochDown := false
+
+if not na(pivH)
+    lastSwingH := pivH
+
+if not na(pivL)
+    lastSwingL := pivL
+
+// Break detection on every bar
+if not na(lastSwingH) and ta.crossover(close, lastSwingH)
+    if msBias <= 0
+        chochUp  := true
+    else
+        bosUp    := true
+    msBias := 1
+
+if not na(lastSwingL) and ta.crossunder(close, lastSwingL)
+    if msBias >= 0
+        chochDown := true
+    else
+        bosDown   := true
+    msBias := -1
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ORDER BLOCKS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Bullish OB = last bearish candle before a confirmed pivot low
+// Bearish OB = last bullish candle before a confirmed pivot high
+
+var box[]   bullOBBoxes  = array.new_box()
+var float[] bullOBTops   = array.new_float()
+var float[] bullOBBots   = array.new_float()
+
+var box[]   bearOBBoxes  = array.new_box()
+var float[] bearOBTops   = array.new_float()
+var float[] bearOBBots   = array.new_float()
+
+f_addOB(box[] boxes, float[] tops, float[] bots, int obIdx, color bg) =>
+    t  = high[obIdx]
+    b  = low[obIdx]
+    bx = box.new(bar_index - obIdx, t, bar_index, b,
+                 bgcolor=bg, border_color=color.new(color.white, 70), border_width=1)
+    array.push(boxes, bx)
+    array.push(tops,  t)
+    array.push(bots,  b)
+
+if i_showOB
+    // Bullish OB on pivot low
+    if not na(pivL)
+        obIdx = 0
+        for j = 1 to i_swingLen + 5
+            if close[i_swingLen + j] < open[i_swingLen + j]
+                obIdx := i_swingLen + j
+                break
+        if obIdx > 0
+            f_addOB(bullOBBoxes, bullOBTops, bullOBBots, obIdx, i_bullOB)
+            if array.size(bullOBBoxes) > i_maxOB
+                box.delete(array.shift(bullOBBoxes))
+                array.shift(bullOBTops)
+                array.shift(bullOBBots)
+
+    // Bearish OB on pivot high
+    if not na(pivH)
+        obIdx = 0
+        for j = 1 to i_swingLen + 5
+            if close[i_swingLen + j] > open[i_swingLen + j]
+                obIdx := i_swingLen + j
+                break
+        if obIdx > 0
+            f_addOB(bearOBBoxes, bearOBTops, bearOBBots, obIdx, i_bearOB)
+            if array.size(bearOBBoxes) > i_maxOB
+                box.delete(array.shift(bearOBBoxes))
+                array.shift(bearOBTops)
+                array.shift(bearOBBots)
+
+// Extend + mitigate OBs every bar
+n = array.size(bullOBBoxes)
+if n > 0
+    for i = n - 1 to 0
+        bx = array.get(bullOBBoxes, i)
+        box.set_right(bx, bar_index)
+        if i_obMitigate and close < array.get(bullOBBots, i)
+            box.delete(bx)
+            array.remove(bullOBBoxes, i)
+            array.remove(bullOBTops,  i)
+            array.remove(bullOBBots,  i)
+
+n2 = array.size(bearOBBoxes)
+if n2 > 0
+    for i = n2 - 1 to 0
+        bx = array.get(bearOBBoxes, i)
+        box.set_right(bx, bar_index)
+        if i_obMitigate and close > array.get(bearOBTops, i)
+            box.delete(bx)
+            array.remove(bearOBBoxes, i)
+            array.remove(bearOBTops,  i)
+            array.remove(bearOBBots,  i)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FAIR VALUE GAPS
+// ═══════════════════════════════════════════════════════════════════════════════
+var box[] bullFVGs = array.new_box()
+var box[] bearFVGs = array.new_box()
+
+fvgMin = atr * i_fvgMinAtr
+
+bullFVGcond = low > high[2] and (low - high[2]) >= fvgMin
+bearFVGcond = high < low[2] and (low[2] - high) >= fvgMin
+
+if i_showFVG
+    if bullFVGcond
+        bx = box.new(bar_index - 2, low, bar_index, high[2],
+                     bgcolor=i_bullFVG, border_color=color.new(#43A047, 50), border_width=1)
+        array.push(bullFVGs, bx)
+        if array.size(bullFVGs) > 10
+            box.delete(array.shift(bullFVGs))
+
+    if bearFVGcond
+        bx = box.new(bar_index - 2, low[2], bar_index, high,
+                     bgcolor=i_bearFVG, border_color=color.new(#E65100, 50), border_width=1)
+        array.push(bearFVGs, bx)
+        if array.size(bearFVGs) > 10
+            box.delete(array.shift(bearFVGs))
+
+    // Extend and fill on mitigation
+    nb = array.size(bullFVGs)
+    if nb > 0
+        for i = nb - 1 to 0
+            bx = array.get(bullFVGs, i)
+            box.set_right(bx, bar_index)
+            if close >= box.get_bottom(bx) and close <= box.get_top(bx)
+                box.delete(bx)
+                array.remove(bullFVGs, i)
+
+    nbr = array.size(bearFVGs)
+    if nbr > 0
+        for i = nbr - 1 to 0
+            bx = array.get(bearFVGs, i)
+            box.set_right(bx, bar_index)
+            if close >= box.get_bottom(bx) and close <= box.get_top(bx)
+                box.delete(bx)
+                array.remove(bearFVGs, i)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LIQUIDITY — EQUAL HIGHS / LOWS
+// ═══════════════════════════════════════════════════════════════════════════════
+recentH = ta.highest(high, i_liqLen)
+recentL = ta.lowest(low,   i_liqLen)
+
+eqHTol = recentH * i_eqPct / 100
+eqLTol = recentL * i_eqPct / 100
+
+touchH = 0
+touchL = 0
+for j = 0 to i_liqLen - 1
+    if math.abs(high[j] - recentH) <= eqHTol
+        touchH += 1
+    if math.abs(low[j]  - recentL) <= eqLTol
+        touchL += 1
+
+isEQH = i_showLiq and touchH >= 2
+isEQL = i_showLiq and touchL >= 2
+
+var line eqhLine = na
+var line eqlLine = na
+
+if isEQH
+    line.delete(eqhLine)
+    eqhLine := line.new(bar_index - i_liqLen + 1, recentH, bar_index + 8, recentH,
+                        color=#FFA000, style=line.style_dotted, width=2)
+
+if isEQL
+    line.delete(eqlLine)
+    eqlLine := line.new(bar_index - i_liqLen + 1, recentL, bar_index + 8, recentL,
+                        color=#9C27B0, style=line.style_dotted, width=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+// EMA Cloud
+p1 = plot(i_showEMA ? ema1 : na, "EMA Fast", color=bullTrend ? #26A69A : #EF5350, linewidth=1)
+p2 = plot(i_showEMA ? ema2 : na, "EMA Mid",  color=bullTrend ? #00796B : #C62828, linewidth=1)
+     plot(i_showEMA ? ema3 : na, "EMA Slow", color=color.new(color.gray, 20), linewidth=2)
+fill(p1, p2, color=bullTrend ? color.new(#26A69A, 92) : bearTrend ? color.new(#EF5350, 92) : color.new(color.gray, 95))
+
+// Supertrend line
+stCol = stDir == -1 ? color.new(#26A69A, 0) : color.new(#EF5350, 0)
+plot(i_showST ? stLine : na, "Supertrend", color=stCol, linewidth=2, style=plot.style_stepline)
+
+// BOS labels
+if i_showBOS and bosUp
+    label.new(bar_index, low[1], "BOS", style=label.style_label_up,
+               color=color.new(#00897B, 55), textcolor=color.white, size=size.tiny)
+if i_showBOS and bosDown
+    label.new(bar_index, high[1], "BOS", style=label.style_label_down,
+               color=color.new(#C62828, 55), textcolor=color.white, size=size.tiny)
+
+// CHoCH labels
+if i_showCHoCH and chochUp
+    label.new(bar_index, low[1], "CHoCH", style=label.style_label_up,
+               color=color.new(#00BCD4, 45), textcolor=color.white, size=size.small)
+if i_showCHoCH and chochDown
+    label.new(bar_index, high[1], "CHoCH", style=label.style_label_down,
+               color=color.new(#FF7043, 45), textcolor=color.white, size=size.small)
+
+// Pivot dots (optional)
+plotshape(i_showPivots and not na(pivH), location=location.abovebar,
+           style=shape.circle, color=color.new(color.red, 30), size=size.tiny,
+           offset=-i_swingLen)
+plotshape(i_showPivots and not na(pivL), location=location.belowbar,
+           style=shape.circle, color=color.new(#00897B, 30), size=size.tiny,
+           offset=-i_swingLen)
+
+// EQH / EQL labels (fires once per cluster)
+if isEQH and not isEQH[1]
+    label.new(bar_index, recentH + atr * 0.5, "EQH",
+               style=label.style_label_down, color=color.new(#FFA000, 65),
+               textcolor=color.white, size=size.tiny)
+if isEQL and not isEQL[1]
+    label.new(bar_index, recentL - atr * 0.5, "EQL",
+               style=label.style_label_up, color=color.new(#9C27B0, 65),
+               textcolor=color.white, size=size.tiny)
+
+// Candle coloring by trend
+barcolor(bullTrend ? color.new(#26A69A, 60) : bearTrend ? color.new(#EF5350, 60) : na)
