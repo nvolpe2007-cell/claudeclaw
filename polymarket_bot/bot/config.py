@@ -36,6 +36,14 @@ class Config:
     order_ttl_seconds: int = 60
     api_timeout_seconds: float = 10.0
 
+    # Value betting (triangulation)
+    enable_value_betting: bool = True
+    market_scan_interval_sec: float = 1.5  # fast scanning every 1.5s
+    min_mispricing_cents: float = 1.0  # trade if mispricing >= 1 cent
+    max_concurrent_positions: int = 5  # max # of concurrent long/short positions
+    max_position_hold_duration: float = 300.0  # force-close after 5 minutes
+    max_position_per_token_usdc: float = 100.0  # max size per token
+
     # Retry backoff
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 60.0
@@ -75,4 +83,10 @@ def load_config() -> Config:
         scan_interval_seconds=_float("SCAN_INTERVAL_SECONDS", 30.0),
         requote_delay_seconds=_float("REQUOTE_DELAY_SECONDS", 1.0),
         order_ttl_seconds=_int("ORDER_TTL_SECONDS", 60),
+        enable_value_betting=os.getenv("ENABLE_VALUE_BETTING", "true").lower() == "true",
+        market_scan_interval_sec=_float("MARKET_SCAN_INTERVAL_SEC", 1.5),
+        min_mispricing_cents=_float("MIN_MISPRICING_CENTS", 1.0),
+        max_concurrent_positions=_int("MAX_CONCURRENT_POSITIONS", 5),
+        max_position_hold_duration=_float("MAX_POSITION_HOLD_DURATION", 300.0),
+        max_position_per_token_usdc=_float("MAX_POSITION_PER_TOKEN_USDC", 100.0),
     )
