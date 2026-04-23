@@ -1,0 +1,307 @@
+//@version=5
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SMC Backtest Pro — strategy() version for TradingView Strategy Tester
+//
+//  Improvements over lux_signals.pine:
+//   1. ADX filter — skips choppy/ranging markets (biggest source of whipsaws)
+//   2. ATR volatility gate — skips dead markets and news spikes
+//   3. RSI slope filter — requires momentum to be turning, not just oversold
+//   4. Extension filter — avoids entering when price is too far from ST/EMA
+//   5. Signal dedup — ignores repeat signals while already in a trade
+//   6. Proper SL locked at actual entry price (not signal bar close)
+//   7. Session filter for equities (optional)
+//   8. Split TP: 50% at TP1, trail remaining to TP2
+//   9. Commission + slippage set realistically
+//  10. Performance dashboard with key stats breakdown
+// ═══════════════════════════════════════════════════════════════════════════════
+strategy("SMC Backtest Pro", shorttitle="SMCbt",
+         overlay=true,
+         default_qty_type  = strategy.percent_of_equity,
+         default_qty_value = 2,
+         commission_type   = strategy.commission.percent,
+         commission_value  = 0.1,
+         slippage          = 2,
+         max_labels_count  = 500,
+         max_lines_count   = 200,
+         pyramiding        = 0)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+var string G_TREND = "── Trend ──"
+var string G_MOM   = "── Momentum ──"
+var string G_FILT  = "── Extra Filters ──"
+var string G_RISK  = "── Risk / Reward ──"
+var string G_SESS  = "── Session ──"
+var string G_DISP  = "── Display ──"
+
+// Trend
+i_trendMode = input.string("Both",    "Trend Filter",  options=["Supertrend","EMA Cloud","Both"], group=G_TREND)
+i_stFactor  = input.float(3.0,  "ST Factor",           step=0.1, minval=0.5, group=G_TREND)
+i_stLen     = input.int(10,     "ST ATR Length",        minval=1, group=G_TREND)
+i_emaFast   = input.int(20,     "Fast EMA",             minval=1, group=G_TREND)
+i_emaSlow   = input.int(50,     "Slow EMA",             minval=1, group=G_TREND)
+i_emaTrend  = input.int(200,    "Trend EMA",            minval=1, group=G_TREND)
+i_tradeDir  = input.string("Both", "Trade Direction",  options=["Long Only","Short Only","Both"], group=G_TREND)
+
+// Momentum
+i_rsiLen    = input.int(14,  "RSI Length",              minval=2, group=G_MOM)
+i_rsiOB     = input.int(70,  "RSI Overbought (sells)",  minval=55, maxval=90, group=G_MOM)
+i_rsiOS     = input.int(30,  "RSI Oversold  (buys)",    minval=10, maxval=45, group=G_MOM)
+i_rsiSlope  = input.bool(true, "RSI Slope Confirmation", group=G_MOM)
+
+// Extra Filters (the gap-fillers)
+i_adxFilter  = input.bool(true,  "ADX Trend Filter",    group=G_FILT)
+i_adxMin     = input.int(20,     "Min ADX",             minval=10, maxval=50, group=G_FILT)
+i_atrFilter  = input.bool(true,  "ATR Volatility Gate", group=G_FILT)
+i_atrLo      = input.float(0.5,  "Min ATR (×20-bar avg)", step=0.1, minval=0.1, group=G_FILT)
+i_atrHi      = input.float(3.0,  "Max ATR (×20-bar avg)", step=0.1, minval=1.0, group=G_FILT)
+i_extFilter  = input.bool(true,  "Extension Filter",    group=G_FILT)
+i_extMax     = input.float(2.0,  "Max ATR from ST Line", step=0.1, group=G_FILT)
+i_volFilter  = input.bool(false, "Volume Filter",       group=G_FILT)
+i_volMult    = input.float(1.2,  "Volume ×avg",         step=0.1, group=G_FILT)
+
+// Risk/Reward
+i_slAtr     = input.float(1.5, "SL (ATR mult)",  step=0.1, minval=0.1, group=G_RISK)
+i_tp1Atr    = input.float(1.5, "TP1 (ATR mult)", step=0.1, minval=0.1, group=G_RISK)
+i_tp2Atr    = input.float(3.5, "TP2 (ATR mult)", step=0.1, minval=0.1, group=G_RISK)
+i_tp1Pct    = input.int(50,    "Exit % at TP1",  minval=10, maxval=90,  group=G_RISK)
+
+// Session (useful for stocks/forex — turn off for crypto)
+i_sessFilter = input.bool(false, "Enable Session Filter",  group=G_SESS)
+i_sessStart  = input.int(930,   "Start (HHMM exchange)",   group=G_SESS)
+i_sessEnd    = input.int(1530,  "End   (HHMM exchange)",   group=G_SESS)
+
+// Display
+i_showTable  = input.bool(true, "Performance Dashboard", group=G_DISP)
+i_showTrades = input.bool(true, "Entry Labels",          group=G_DISP)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CORE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+atr    = ta.atr(14)
+atrAvg = ta.sma(atr, 20)
+rsi    = ta.rsi(close, i_rsiLen)
+vol    = volume
+volAvg = ta.sma(vol, 20)
+
+// EMAs
+emaF = ta.ema(close, i_emaFast)
+emaS = ta.ema(close, i_emaSlow)
+emaT = ta.ema(close, i_emaTrend)
+emaBull = emaF > emaS and emaS > emaT
+emaBear = emaF < emaS and emaS < emaT
+
+// Supertrend
+[stLine, stDir] = ta.supertrend(i_stFactor, i_stLen)
+stBull = stDir == -1
+stBear = stDir ==  1
+
+// ADX — flaw fix #1: skip ranging markets
+[_diPlus, _diMinus, adxVal] = ta.dmi(14, 14)
+adxOk = not i_adxFilter or adxVal > i_adxMin
+
+// ATR volatility gate — flaw fix #2: skip dead/news-spike bars
+atrOk = not i_atrFilter or (atr > atrAvg * i_atrLo and atr < atrAvg * i_atrHi)
+
+// Extension filter — flaw fix #3: don't chase extended moves
+distToST  = math.abs(close - stLine)
+extOk     = not i_extFilter or distToST < atr * i_extMax
+
+// Volume
+volOk = not i_volFilter or vol > volAvg * i_volMult
+
+// RSI slope — flaw fix #4: require momentum turning, not just level
+rsiSlopeBull = not i_rsiSlope or (rsi > rsi[2])   // RSI rising over 2 bars
+rsiSlopeBear = not i_rsiSlope or (rsi < rsi[2])   // RSI falling over 2 bars
+
+// Session
+sessionOk = not i_sessFilter or
+            (time("", str.tostring(i_sessStart) + "-" + str.tostring(i_sessEnd)) != 0)
+
+// Trend booleans
+trendBull = switch i_trendMode
+    "Supertrend" => stBull
+    "EMA Cloud"  => emaBull
+    "Both"       => stBull and emaBull
+    => stBull
+
+trendBear = switch i_trendMode
+    "Supertrend" => stBear
+    "EMA Cloud"  => emaBear
+    "Both"       => stBear and emaBear
+    => stBear
+
+// ── ENTRY SIGNALS ─────────────────────────────────────────────────────────────
+// Bullish: Supertrend flip OR price reclaims fast EMA, with all filters
+stFlipBull = stBull and not stBull[1]
+stFlipBear = stBear and not stBear[1]
+emaXupBull = ta.crossover(close,  emaF) and trendBull
+emaXdnBear = ta.crossunder(close, emaF) and trendBear
+
+rawBull = (stFlipBull or emaXupBull) and trendBull and rsi < i_rsiOB and rsi > i_rsiOS and rsiSlopeBull
+rawBear = (stFlipBear or emaXdnBear) and trendBear and rsi > i_rsiOS and rsi < i_rsiOB and rsiSlopeBear
+
+// All filters combined
+allFilters = adxOk and atrOk and extOk and volOk and sessionOk
+
+longSignal  = rawBull and allFilters and (i_tradeDir == "Long Only"  or i_tradeDir == "Both")
+shortSignal = rawBear and allFilters and (i_tradeDir == "Short Only" or i_tradeDir == "Both")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ENTRIES
+// ═══════════════════════════════════════════════════════════════════════════════
+if longSignal and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, comment="L▲")
+
+if shortSignal and strategy.position_size == 0
+    strategy.entry("Short", strategy.short, comment="S▼")
+
+// ── LOCK EXIT LEVELS AT ACTUAL FILL PRICE ─────────────────────────────────────
+// Uses real entry price (not signal bar close) to avoid SL miscalculation
+var float longEntry  = na
+var float shortEntry = na
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    longEntry := strategy.opentrades.entry_price(0)
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0
+    shortEntry := strategy.opentrades.entry_price(0)
+
+if strategy.position_size == 0
+    longEntry  := na
+    shortEntry := na
+
+// ── EXITS ─────────────────────────────────────────────────────────────────────
+if strategy.position_size > 0 and not na(longEntry)
+    strategy.exit("L-TP1", "Long",
+                  qty_percent = i_tp1Pct,
+                  stop        = longEntry - atr * i_slAtr,
+                  limit       = longEntry + atr * i_tp1Atr,
+                  comment_profit = "TP1", comment_loss = "SL")
+    strategy.exit("L-TP2", "Long",
+                  qty_percent = 100,
+                  stop        = longEntry - atr * i_slAtr,
+                  limit       = longEntry + atr * i_tp2Atr,
+                  comment_profit = "TP2", comment_loss = "SL")
+
+if strategy.position_size < 0 and not na(shortEntry)
+    strategy.exit("S-TP1", "Short",
+                  qty_percent = i_tp1Pct,
+                  stop        = shortEntry + atr * i_slAtr,
+                  limit       = shortEntry - atr * i_tp1Atr,
+                  comment_profit = "TP1", comment_loss = "SL")
+    strategy.exit("S-TP2", "Short",
+                  qty_percent = 100,
+                  stop        = shortEntry + atr * i_slAtr,
+                  limit       = shortEntry - atr * i_tp2Atr,
+                  comment_profit = "TP2", comment_loss = "SL")
+
+// Exit on trend flip (optional safeguard)
+if strategy.position_size > 0 and trendBear
+    strategy.close("Long", comment="Trend Flip")
+if strategy.position_size < 0 and trendBull
+    strategy.close("Short", comment="Trend Flip")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+stCol = stBull ? color.new(#26A69A, 0) : color.new(#EF5350, 0)
+plot(stLine, "Supertrend", color=stCol, linewidth=2, style=plot.style_stepline)
+
+p1 = plot(emaF, "EMA Fast", color=emaBull ? color.new(#26A69A, 20) : color.new(#EF5350, 20))
+p2 = plot(emaS, "EMA Slow", color=emaBull ? color.new(#00796B, 20) : color.new(#C62828, 20))
+fill(p1, p2, color=emaBull ? color.new(#26A69A, 92) : emaBear ? color.new(#EF5350, 92) : color.new(color.gray, 96))
+
+plotshape(longSignal  and i_showTrades, location=location.belowbar, style=shape.labelup,
+           color=color.new(#00897B, 10), textcolor=color.white, text="▲", size=size.small)
+plotshape(shortSignal and i_showTrades, location=location.abovebar, style=shape.labeldown,
+           color=color.new(#C62828, 10), textcolor=color.white, text="▼", size=size.small)
+
+// SL/TP lines on active trade
+slColor  = color.new(#EF5350, 20)
+tp1Color = color.new(#66BB6A, 40)
+tp2Color = color.new(#66BB6A, 0)
+
+plot(strategy.position_size > 0 and not na(longEntry)  ? longEntry  - atr * i_slAtr  : na, "Long SL",  color=slColor,  linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size > 0 and not na(longEntry)  ? longEntry  + atr * i_tp1Atr : na, "Long TP1", color=tp1Color, linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size > 0 and not na(longEntry)  ? longEntry  + atr * i_tp2Atr : na, "Long TP2", color=tp2Color, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size < 0 and not na(shortEntry) ? shortEntry + atr * i_slAtr  : na, "Short SL",  color=slColor,  linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size < 0 and not na(shortEntry) ? shortEntry - atr * i_tp1Atr : na, "Short TP1", color=tp1Color, linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size < 0 and not na(shortEntry) ? shortEntry - atr * i_tp2Atr : na, "Short TP2", color=tp2Color, linewidth=2, style=plot.style_linebr)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PERFORMANCE DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tracks wins/losses broken down by filter state at signal time,
+// so you can see which filters are actually helping.
+
+var int  totalTrades = 0
+var int  wins        = 0
+var int  losses      = 0
+var int  adxWins     = 0
+var int  adxLosses   = 0
+var bool wasInTrade  = false
+var bool lastAdxOk   = false
+
+if strategy.position_size != 0
+    wasInTrade := true
+    lastAdxOk  := adxOk
+
+if strategy.position_size == 0 and wasInTrade
+    wasInTrade := false
+    totalTrades += 1
+    won = strategy.netprofit > strategy.netprofit[1]
+    if won
+        wins += 1
+        if lastAdxOk
+            adxWins += 1
+    else
+        losses += 1
+        if lastAdxOk
+            adxLosses += 1
+
+if barstate.islast and i_showTable
+    winRate    = totalTrades > 0 ? wins / totalTrades * 100 : 0.0
+    adxTotal   = adxWins + adxLosses
+    adxWinRate = adxTotal > 0 ? adxWins / adxTotal * 100 : 0.0
+    pf         = strategy.grossprofit > 0 and strategy.grossloss > 0
+                  ? strategy.grossprofit / math.abs(strategy.grossloss) : 0.0
+    avgWin     = wins > 0 ? strategy.grossprofit / wins : 0.0
+    avgLoss    = losses > 0 ? math.abs(strategy.grossloss) / losses : 0.0
+    rrActual   = avgLoss > 0 ? avgWin / avgLoss : 0.0
+
+    wrColor  = winRate  >= 55 ? #26A69A : winRate  >= 45 ? color.orange : #EF5350
+    pfColor  = pf       >= 1.5 ? #26A69A : pf       >= 1.0 ? color.orange : #EF5350
+    rrColor  = rrActual >= 1.5 ? #26A69A : rrActual >= 1.0 ? color.orange : #EF5350
+
+    tbl = table.new(position.top_right, 2, 12,
+                    bgcolor=color.new(color.black, 72), border_color=color.new(color.white, 80),
+                    border_width=1, frame_color=color.new(color.white, 60), frame_width=1)
+
+    table.cell(tbl, 0, 0,  "SMC Backtest Pro",                          text_color=color.white,   text_size=size.small, bgcolor=color.new(#1A237E, 30))
+    table.cell(tbl, 1, 0,  "",                                                                     text_size=size.small, bgcolor=color.new(#1A237E, 30))
+    table.cell(tbl, 0, 1,  "Net Profit",        text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 1,  str.tostring(math.round(strategy.netprofit, 2)),
+               text_color = strategy.netprofit >= 0 ? #26A69A : #EF5350,  text_size=size.tiny)
+    table.cell(tbl, 0, 2,  "Total Trades",      text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 2,  str.tostring(totalTrades),                   text_color=color.white,   text_size=size.tiny)
+    table.cell(tbl, 0, 3,  "Win Rate",          text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 3,  str.tostring(math.round(winRate, 1)) + "%",  text_color=wrColor,        text_size=size.tiny)
+    table.cell(tbl, 0, 4,  "Wins / Losses",     text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 4,  str.tostring(wins) + " / " + str.tostring(losses), text_color=color.white, text_size=size.tiny)
+    table.cell(tbl, 0, 5,  "Profit Factor",     text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 5,  str.tostring(math.round(pf, 2)),             text_color=pfColor,        text_size=size.tiny)
+    table.cell(tbl, 0, 6,  "Actual R:R",        text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 6,  str.tostring(math.round(rrActual, 2)),       text_color=rrColor,        text_size=size.tiny)
+    table.cell(tbl, 0, 7,  "Avg Win",           text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 7,  str.tostring(math.round(avgWin, 2)),         text_color=#26A69A,        text_size=size.tiny)
+    table.cell(tbl, 0, 8,  "Avg Loss",          text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 8,  str.tostring(math.round(avgLoss, 2)),        text_color=#EF5350,        text_size=size.tiny)
+    table.cell(tbl, 0, 9,  "Max Drawdown",      text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 9,  str.tostring(math.round(strategy.max_drawdown, 2)), text_color=#EF5350, text_size=size.tiny)
+    table.cell(tbl, 0, 10, "ADX-filtered W/L",  text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 10, str.tostring(adxWins) + " / " + str.tostring(adxLosses),
+               text_color=color.new(#42A5F5, 0), text_size=size.tiny)
+    table.cell(tbl, 0, 11, "Commission",        text_color=color.silver, text_size=size.tiny)
+    table.cell(tbl, 1, 11, "0.1% + 2 tick slip",text_color=color.gray,  text_size=size.tiny)
