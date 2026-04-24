@@ -8,19 +8,19 @@ load_dotenv()
 
 @dataclass
 class Config:
-    # ── Exchange ───────────────────────────────────────────────────────────────
-    api_key:         str   = field(default_factory=lambda: os.getenv("BINANCE_API_KEY", ""))
-    api_secret:      str   = field(default_factory=lambda: os.getenv("BINANCE_API_SECRET", ""))
+    # ── Exchange (Kraken) ──────────────────────────────────────────────────────
+    api_key:         str   = field(default_factory=lambda: os.getenv("KRAKEN_API_KEY", ""))
+    api_secret:      str   = field(default_factory=lambda: os.getenv("KRAKEN_API_SECRET", ""))
     paper_trading:   bool  = field(default_factory=lambda: os.getenv("PAPER_TRADING", "true").lower() == "true")
-    testnet:         bool  = field(default_factory=lambda: os.getenv("BINANCE_TESTNET", "false").lower() == "true")
 
-    # ── Symbols to scan ────────────────────────────────────────────────────────
+    # Kraken symbol format: "XBT/USD" (BTC), "ETH/USD", "SOL/USD", "XRP/USD"
+    # Note: Kraken uses XBT for Bitcoin, not BTC
     symbols: List[str] = field(default_factory=lambda: [
         s.strip() for s in
-        os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT").split(",")
+        os.getenv("SYMBOLS", "XBT/USD,ETH/USD,SOL/USD,XRP/USD").split(",")
     ])
 
-    # ── Signal parameters (match Pine Script lux_signals defaults) ─────────────
+    # ── Signal parameters ─────────────────────────────────────────────────────
     ema_fast:        int   = int(os.getenv("EMA_FAST",   "20"))
     ema_slow:        int   = int(os.getenv("EMA_SLOW",   "50"))
     ema_trend:       int   = int(os.getenv("EMA_TREND",  "200"))
@@ -36,25 +36,26 @@ class Config:
     atr_hi_mult:     float = float(os.getenv("ATR_HI",   "3.0"))
     ext_max_atr:     float = float(os.getenv("EXT_MAX",  "2.0"))
 
-    # ── Risk management ────────────────────────────────────────────────────────
-    risk_pct:        float = float(os.getenv("RISK_PCT",      "1.0"))   # % of account per trade
-    sl_atr:          float = float(os.getenv("SL_ATR",        "1.5"))   # SL distance in ATRs
-    tp1_atr:         float = float(os.getenv("TP1_ATR",       "1.5"))   # TP1 in ATRs
-    tp2_atr:         float = float(os.getenv("TP2_ATR",       "3.5"))   # TP2 in ATRs
-    tp1_close_pct:   float = float(os.getenv("TP1_CLOSE_PCT", "50"))    # % to close at TP1
-    daily_loss_pct:  float = float(os.getenv("DAILY_LOSS_PCT","3.0"))   # max daily loss %
-    max_open_trades: int   = int(os.getenv("MAX_OPEN_TRADES", "3"))     # across all symbols
+    # ── Risk management ───────────────────────────────────────────────────────
+    risk_pct:        float = float(os.getenv("RISK_PCT",      "1.0"))
+    sl_atr:          float = float(os.getenv("SL_ATR",        "1.5"))
+    tp1_atr:         float = float(os.getenv("TP1_ATR",       "1.5"))
+    tp2_atr:         float = float(os.getenv("TP2_ATR",       "3.5"))
+    tp1_close_pct:   float = float(os.getenv("TP1_CLOSE_PCT", "50"))
+    daily_loss_pct:  float = float(os.getenv("DAILY_LOSS_PCT","3.0"))
+    max_open_trades: int   = int(os.getenv("MAX_OPEN_TRADES", "3"))
 
-    # ── Timing ─────────────────────────────────────────────────────────────────
-    kline_interval:  str   = os.getenv("KLINE_INTERVAL", "1m")          # primary TF
-    confirm_interval:str   = os.getenv("CONFIRM_INTERVAL", "5m")        # trend-filter TF
-    bars_required:   int   = int(os.getenv("BARS_REQUIRED", "210"))     # min bars before trading
+    # ── Timing ────────────────────────────────────────────────────────────────
+    # Kraken WS interval options (minutes): 1,5,15,30,60,240,1440,10080,21600
+    kline_interval:   int  = int(os.getenv("KLINE_INTERVAL",   "1"))   # 1m primary
+    confirm_interval: int  = int(os.getenv("CONFIRM_INTERVAL", "5"))   # 5m trend filter
+    bars_required:    int  = int(os.getenv("BARS_REQUIRED",    "210"))
 
-    # ── Notifications ──────────────────────────────────────────────────────────
+    # ── Notifications ─────────────────────────────────────────────────────────
     telegram_token:  str   = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_chat:   str   = os.getenv("TELEGRAM_CHAT_ID", "")
 
-    # ── Heartbeat ──────────────────────────────────────────────────────────────
+    # ── Heartbeat ─────────────────────────────────────────────────────────────
     db_url:          str   = os.getenv("DATABASE_URL", "")
     heartbeat_secs:  int   = int(os.getenv("HEARTBEAT_SECS", "30"))
 

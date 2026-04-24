@@ -1,4 +1,5 @@
-python-binance>=1.0.19
+ccxt>=4.3.0
+websockets>=12.0
 pandas>=2.0.0
 numpy>=1.24.0
 aiohttp>=3.9.0
