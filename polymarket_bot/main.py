@@ -5,9 +5,12 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 
 from bot.client import PolyClient
 from bot.config import load_config
+from bot.dashboard import Dashboard
+from bot.notifications import Notifier
 from bot.opportunity import OpportunityDetector
 from bot.risk import RiskManager
 from bot.scanner import MarketScanner
@@ -43,24 +46,28 @@ class ValueBettingCoordinator:
         client: PolyClient,
         scanner: MarketScanner,
         risk: RiskManager,
+        notifier: Notifier,
+        dashboard: Dashboard,
     ) -> None:
         self._config = config
         self._client = client
         self._scanner = scanner
         self._risk = risk
+        self._notifier = notifier
+        self._dashboard = dashboard
 
-        # Triangulation + opportunity detection
         self._graph = MarketGraph()
         self._detector = OpportunityDetector(self._graph, config)
-
-        # Value executor
-        self._executor = ValueExecutor(client, config, risk)
+        self._executor = ValueExecutor(client, config, risk, notifier)
 
         self._shutdown = asyncio.Event()
         self._last_rebalance = 0.0
+        self._last_summary = 0.0
 
     async def run(self) -> None:
-        logger.info("=== Polymarket Value Betting Bot started ===")
+        mode = " [DRY RUN]" if self._config.dry_run else ""
+        logger.info("=== Polymarket Value Betting Bot started%s ===", mode)
+
         try:
             bal = await self._client.get_balance_allowance()
             logger.info("Wallet balance/allowance: %s", bal)
@@ -70,10 +77,10 @@ class ValueBettingCoordinator:
         while not self._shutdown.is_set():
             if self._risk.is_daily_limit_breached():
                 logger.critical("Daily loss limit hit — shutting down")
+                await self._notifier.alert("Daily loss limit breached — bot halted")
                 break
 
             try:
-                # FAST: Scan markets and detect opportunities every 1-2 seconds
                 await self._fast_scan_loop()
             except Exception as exc:
                 logger.error("Scan loop error: %s", exc, exc_info=True)
@@ -83,21 +90,13 @@ class ValueBettingCoordinator:
         await self._shutdown_all()
 
     async def _fast_scan_loop(self) -> None:
-        """Fast market scanning and opportunity detection."""
-        # Scan all BTC markets
         all_markets = await self._scanner.scan()
 
-        # Add markets to triangulation graph
         for opp in all_markets:
             self._graph.add_market(opp)
 
-        # Detect mispricings
         opportunities = await self._detector.find_opportunities()
 
-        if not opportunities:
-            return
-
-        # Process top opportunities (normal execution speed)
         for opp in opportunities:
             if self._risk.is_daily_limit_breached():
                 break
@@ -106,52 +105,63 @@ class ValueBettingCoordinator:
             except Exception as exc:
                 logger.error("Execution error for %s: %s", opp.token_id[:12], exc)
 
-        # Periodic rebalancing (every 30s)
-        import time
         now = time.time()
+
+        # Periodic rebalancing every 30s
         if now - self._last_rebalance >= 30:
             await self._executor.rebalance_positions()
             self._last_rebalance = now
 
-        # Log status
+        # Update dashboard
+        self._dashboard.update(
+            self._risk,
+            self._executor,
+            markets_scanned=len(all_markets),
+            opportunities_found=len(opportunities),
+        )
+
+        # Daily summary notification every hour
+        if now - self._last_summary >= 3600:
+            await self._notifier.daily_summary(
+                self._risk.get_daily_pnl(),
+                self._executor.trade_count,
+                len(self._executor.positions),
+            )
+            self._last_summary = now
+
         logger.info(
-            "Scan: %d markets, %d opps | Positions: %d | Daily P&L: %+.2f USDC",
+            "Scan: %d BTC markets, %d opps | Positions: %d | Daily P&L: %+.2f USDC%s",
             len(all_markets),
             len(opportunities),
             len(self._executor.positions),
             self._risk.get_daily_pnl(),
+            " [DRY RUN]" if self._config.dry_run else "",
         )
 
     async def _shutdown_all(self) -> None:
         logger.info("Shutting down...")
-        try:
-            # Close all open positions
-            import time
-            for token_id in list(self._executor.positions.keys()):
-                try:
-                    book = await self._client.get_order_book(token_id)
-                    bids = getattr(book, "bids", []) or []
-                    asks = getattr(book, "asks", []) or []
-                    if bids and asks:
-                        mid = (float(bids[0].get("price", 0)) + float(asks[0].get("price", 1))) / 2
-                        exit_price = round(mid, 2)
 
-                        pos = self._executor.positions[token_id]
-                        side = "SELL" if pos.side == "LONG" else "BUY"
+        for token_id in list(self._executor.positions.keys()):
+            try:
+                book = await self._client.get_order_book(token_id)
+                bids = getattr(book, "bids", []) or []
+                asks = getattr(book, "asks", []) or []
+                if bids and asks:
+                    mid = (float(bids[0].get("price", 0)) + float(asks[0].get("price", 1))) / 2
+                    exit_price = round(mid, 2)
+                    pos = self._executor.positions[token_id]
+                    side = "SELL" if pos.side == "LONG" else "BUY"
+                    if not self._config.dry_run:
                         await self._client.create_and_post_order(token_id, exit_price, pos.size, side)
-
-                        pnl_usdc = (exit_price - pos.entry_price) * pos.size * (
-                            1 if pos.side == "LONG" else -1
-                        )
-                        self._risk.record_fill(token_id, pnl_usdc)
-                        del self._executor.positions[token_id]
-                except Exception as exc:
-                    logger.warning("Error closing position: %s", exc)
-        except Exception as exc:
-            logger.warning("Error during shutdown: %s", exc)
+                    pnl_usdc = (exit_price - pos.entry_price) * pos.size * (1 if pos.side == "LONG" else -1)
+                    self._risk.record_fill(token_id, pnl_usdc)
+                    del self._executor.positions[token_id]
+            except Exception as exc:
+                logger.warning("Error closing position on shutdown: %s", exc)
 
         self._risk.save_state(STATE_PATH)
-        logger.info("=== Bot shutdown complete ===")
+        self._dashboard.stop()
+        logger.info("=== Bot shutdown complete | Final P&L: %+.4f USDC ===", self._risk.get_daily_pnl())
 
     def request_shutdown(self) -> None:
         logger.info("Shutdown requested")
@@ -168,6 +178,9 @@ async def async_main() -> None:
         logger.critical("Copy .env.example to .env and fill in your credentials.")
         sys.exit(1)
 
+    if config.dry_run:
+        logger.info("*** DRY RUN MODE — no real orders will be placed ***")
+
     if not config.enable_value_betting:
         logger.warning("Value betting disabled in config — exiting")
         sys.exit(0)
@@ -179,8 +192,14 @@ async def async_main() -> None:
     risk = RiskManager(config)
     risk.load_state(STATE_PATH)
 
+    notifier = Notifier(config)
+    dashboard = Dashboard(port=config.dashboard_port, dry_run=config.dry_run)
+
+    if config.dashboard_enabled:
+        dashboard.start()
+
     scanner = MarketScanner(client, config)
-    coordinator = ValueBettingCoordinator(config, client, scanner, risk)
+    coordinator = ValueBettingCoordinator(config, client, scanner, risk, notifier, dashboard)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, coordinator.request_shutdown)

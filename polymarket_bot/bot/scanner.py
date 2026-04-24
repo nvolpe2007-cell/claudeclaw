@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 END_CURSOR = "LTE="
 
+_BTC_KEYWORDS = {"btc", "bitcoin"}
+
 
 @dataclass
 class Opportunity:
@@ -66,11 +68,26 @@ class MarketScanner:
         return [m for m in markets if self._is_market_active(m)]
 
     def _is_market_active(self, market: dict) -> bool:
-        return (
+        if not (
             market.get("active", False)
             and not market.get("closed", True)
             and not market.get("archived", False)
             and len(market.get("tokens", [])) == 2
+        ):
+            return False
+        if self._config.btc_only and not self._is_btc_market(market):
+            return False
+        return True
+
+    def _is_btc_market(self, market: dict) -> bool:
+        question = (market.get("question") or "").lower()
+        if any(kw in question for kw in _BTC_KEYWORDS):
+            return True
+        # Also check tags if present
+        tags = market.get("tags") or []
+        return any(
+            any(kw in str(tag).lower() for kw in _BTC_KEYWORDS)
+            for tag in tags
         )
 
     async def _evaluate_market(self, market: dict) -> Opportunity | None:
