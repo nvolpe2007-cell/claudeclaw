@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Optional
 
+import json
 import aiohttp
 import pandas as pd
 
@@ -39,8 +40,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-TRADE_LOG   = os.path.join(_SCRIPT_DIR, "..", "trades_paper.csv")
+_SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+TRADE_LOG    = os.path.join(_SCRIPT_DIR, "..", "trades_paper.csv")
+LESSONS_FILE = os.path.join(_SCRIPT_DIR, "..", "trade_lessons.json")
 
 
 # ── TELEGRAM ──────────────────────────────────────────────────────────────────
@@ -78,6 +80,78 @@ def _log_trade(symbol: str, direction: int, entry: float, exit_price: float,
             ])
     except Exception as exc:
         log.warning("Trade log write failed: %s", exc)
+
+
+# ── TRADE POST-MORTEM ─────────────────────────────────────────────────────────
+
+def _write_lesson(symbol: str, direction: int, entry: float, exit_price: float,
+                  pnl_pct: float, signal_context: dict):
+    """Append a losing trade to trade_lessons.json for review and pattern analysis."""
+    lesson = {
+        "time_utc":   datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "symbol":     symbol,
+        "direction":  "LONG" if direction == 1 else "SHORT",
+        "entry":      entry,
+        "exit":       exit_price,
+        "pnl_pct":    round(pnl_pct * 100, 3),
+        "signal":     signal_context,
+    }
+    lessons = []
+    if os.path.exists(LESSONS_FILE):
+        try:
+            with open(LESSONS_FILE) as f:
+                lessons = json.load(f)
+        except Exception:
+            lessons = []
+    lessons.append(lesson)
+    try:
+        with open(LESSONS_FILE, "w") as f:
+            json.dump(lessons, f, indent=2)
+    except Exception as exc:
+        log.warning("Lessons write failed: %s", exc)
+
+
+async def send_postmortem(symbol: str, direction: int, entry: float, exit_price: float,
+                          pnl_pct: float, signal_context: dict, daily_pnl: float):
+    """Send a loss post-mortem to Telegram — what triggered it, what to watch for next time."""
+    ctx = signal_context
+    strength   = ctx.get("strength", "?")
+    adx        = ctx.get("adx", "?")
+    rsi        = ctx.get("rsi", "?")
+    srsi       = ctx.get("srsi", "?")
+    vwap_ok    = "✓" if ctx.get("vwap_ok") else "✗"
+    vol_surge  = "✓" if ctx.get("vol_surge") else "✗"
+    htf_align  = "✓" if ctx.get("htf_align") else "✗"
+    trigger    = ctx.get("trigger", "unknown")
+    atr        = ctx.get("atr", 0)
+
+    # Simple diagnostic: flag which quality filters were weak
+    weak = []
+    if not ctx.get("vwap_ok"):    weak.append("price was against VWAP")
+    if not ctx.get("vol_surge"):  weak.append("no volume surge (weak conviction)")
+    if not ctx.get("htf_align"):  weak.append("HTF trend not fully aligned")
+    if isinstance(adx, float) and adx < 25: weak.append(f"ADX only {adx:.1f} (marginal trend strength)")
+    if isinstance(rsi, float) and direction == 1 and rsi > 60: weak.append(f"RSI {rsi:.1f} (already elevated for long)")
+    if isinstance(rsi, float) and direction == -1 and rsi < 40: weak.append(f"RSI {rsi:.1f} (already low for short)")
+
+    flags = "\n".join(f"  ⚠ {w}" for w in weak) if weak else "  All filters looked strong at entry"
+
+    await send_telegram(
+        f"📊 TRADE ANALYSIS — {symbol} {'LONG' if direction==1 else 'SHORT'}\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"WHY IT WAS PLACED:\n"
+        f"  Trigger: {trigger}\n"
+        f"  Strength: {strength}/5\n"
+        f"  ADX: {adx}  RSI: {rsi}  SRSI: {srsi}\n"
+        f"  VWAP: {vwap_ok}  Volume: {vol_surge}  HTF: {htf_align}\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"WHAT LOOKED WEAK:\n"
+        f"{flags}\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"Entry: {entry:,.4f}  Exit: {exit_price:,.4f}\n"
+        f"Loss: {pnl_pct:.2%}  |  Today: {daily_pnl:.2%}\n"
+        f"Logged to trade_lessons.json"
+    )
 
 
 # ── HEARTBEAT ─────────────────────────────────────────────────────────────────
@@ -148,6 +222,18 @@ async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManag
         tp2_price   = sig.tp2_price,
         qty         = qty,
         order_id    = str(order.get("id", "")),
+        signal_context = {
+            "trigger":   "ST-flip" if "ST-flip" in sig.reason else "EMA-X",
+            "strength":  sig.strength,
+            "atr":       round(sig.atr, 6),
+            "adx":       float(sig.reason.split("ADX=")[1].split()[0]) if "ADX=" in sig.reason else None,
+            "rsi":       float(sig.reason.split("RSI=")[1].split()[0]) if "RSI=" in sig.reason else None,
+            "srsi":      sig.reason.split("SRSI=")[1].split()[0] if "SRSI=" in sig.reason else None,
+            "vwap_ok":   "VWAP=✓" in sig.reason,
+            "vol_surge": "VOL=✓"  in sig.reason,
+            "htf_align": sig.strength >= 2,  # HTF contributes to score
+            "reason":    sig.reason,
+        },
     )
     await risk.register_trade(state)
 
@@ -213,8 +299,11 @@ async def check_exit(symbol: str, current_price: float, current_atr: float,
         pnl_pct  = (current_price - trade.entry_price) / trade.entry_price * trade.direction
         usd_loss = remaining * abs(current_price - trade.entry_price)
         log.info("[%s] SL hit @ %.4f  -$%.2f (%.2f%%)", symbol, current_price, usd_loss, pnl_pct * 100)
+        ctx = trade.signal_context
         await exchange.place_market_order(symbol, close_side, remaining)
         _log_trade(symbol, trade.direction, trade.entry_price, current_price, pnl_pct, "SL")
+        _write_lesson(symbol, trade.direction, trade.entry_price, current_price,
+                      pnl_pct, ctx)
         await risk.close_trade(symbol, current_price, remaining, is_sl=True)
         await send_telegram(
             f"🛑 STOP LOSS — {symbol} {'LONG' if trade.direction==1 else 'SHORT'}\n"
@@ -224,6 +313,8 @@ async def check_exit(symbol: str, current_price: float, current_atr: float,
             f"━━━━━━━━━━━━━━━━━\n"
             f"⏸ 15-min cooldown  |  Today: {risk.daily_pnl:.2%}"
         )
+        await send_postmortem(symbol, trade.direction, trade.entry_price, current_price,
+                              pnl_pct, ctx, risk.daily_pnl)
 
     elif hit_tp1:
         tp1_qty = round(trade.qty * cfg.tp1_close_pct / 100, 6)

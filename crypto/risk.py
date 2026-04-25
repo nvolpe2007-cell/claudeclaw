@@ -13,15 +13,16 @@ from config import cfg
 
 @dataclass
 class TradeState:
-    symbol:       str
-    direction:    int        # 1=long, -1=short
-    entry_price:  float
-    sl_price:     float
-    tp1_price:    float
-    tp2_price:    float
-    qty:          float
-    tp1_closed:   bool = False
-    order_id:     str  = ""
+    symbol:         str
+    direction:      int        # 1=long, -1=short
+    entry_price:    float
+    sl_price:       float
+    tp1_price:      float
+    tp2_price:      float
+    qty:            float
+    tp1_closed:     bool  = False
+    order_id:       str   = ""
+    signal_context: dict  = field(default_factory=dict)  # indicator snapshot at entry
 
 
 class RiskManager:
