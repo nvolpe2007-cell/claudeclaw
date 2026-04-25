@@ -54,9 +54,13 @@ class ExchangeClient:
             "secret":  cfg.api_secret,
             "enableRateLimit": True,
         })
-        # Validate keys by loading markets (also populates symbol info)
-        await self._kraken.load_markets()
-        log.info("Kraken connected (paper=%s)", cfg.paper_trading)
+        try:
+            await self._kraken.load_markets()
+            log.info("Kraken connected (paper=%s)", cfg.paper_trading)
+        except Exception as exc:
+            log.error("Kraken connect failed: %s", exc)
+            if not cfg.paper_trading:
+                raise
 
     async def disconnect(self):
         if self._kraken:
@@ -229,9 +233,9 @@ class ExchangeClient:
             log.info("[PAPER] STOP-LOSS %s %s qty=%.6f stop=%.4f", side, symbol, qty, stop_price)
             return {"id": f"paper_{int(time.time())}"}
         try:
+            # ccxt Kraken: pass stop price as the price positional arg
             return await self._kraken.create_order(
-                symbol, "stop-loss", side.lower(), qty,
-                params={"stopLossPrice": stop_price}
+                symbol, "stop-loss", side.lower(), qty, stop_price
             )
         except Exception as exc:
             log.error("Stop-loss order failed %s %s: %s", side, symbol, exc)
@@ -244,8 +248,7 @@ class ExchangeClient:
             return {"id": f"paper_{int(time.time())}"}
         try:
             return await self._kraken.create_order(
-                symbol, "take-profit", side.lower(), qty,
-                params={"takeProfitPrice": tp_price}
+                symbol, "take-profit", side.lower(), qty, tp_price
             )
         except Exception as exc:
             log.error("Take-profit order failed %s %s: %s", side, symbol, exc)

@@ -1,5 +1,5 @@
 """
-Async crypto scalping bot — Binance Futures.
+Async crypto scalping bot — Kraken.
 
 Architecture:
 - One WebSocket stream per (symbol, interval) pair, all concurrent
@@ -10,25 +10,26 @@ Architecture:
 
 Run:
     PAPER_TRADING=true python crypto/bot.py
-    PAPER_TRADING=false BINANCE_API_KEY=... BINANCE_API_SECRET=... python crypto/bot.py
+    PAPER_TRADING=false KRAKEN_API_KEY=... KRAKEN_API_SECRET=... python crypto/bot.py
 """
 
 from __future__ import annotations
 import asyncio
+import csv
 import logging
+import os
 import sys
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
 import pandas as pd
 
-sys.path.insert(0, __file__.rsplit("/", 1)[0])   # add crypto/ to path
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from config import cfg
 from exchange import ExchangeClient
-from signals import compute_signal
+from signals import compute_signal, _atr
 from risk import RiskManager, TradeState
 
 logging.basicConfig(
@@ -37,6 +38,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("bot")
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TRADE_LOG   = os.path.join(_SCRIPT_DIR, "..", "trades_paper.csv")
 
 
 # ── TELEGRAM ──────────────────────────────────────────────────────────────────
@@ -50,6 +54,30 @@ async def send_telegram(text: str):
             await session.post(url, json={"chat_id": cfg.telegram_chat, "text": text})
     except Exception as exc:
         log.warning("Telegram send failed: %s", exc)
+
+
+# ── TRADE LOG ─────────────────────────────────────────────────────────────────
+
+def _log_trade(symbol: str, direction: int, entry: float, exit_price: float,
+               pnl_pct: float, exit_reason: str):
+    exists = os.path.exists(TRADE_LOG)
+    try:
+        with open(TRADE_LOG, "a", newline="") as f:
+            w = csv.writer(f)
+            if not exists:
+                w.writerow(["time_utc", "symbol", "direction", "entry", "exit",
+                             "pnl_pct", "exit_reason"])
+            w.writerow([
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                symbol,
+                "LONG" if direction == 1 else "SHORT",
+                f"{entry:.6f}",
+                f"{exit_price:.6f}",
+                f"{pnl_pct:.4f}",
+                exit_reason,
+            ])
+    except Exception as exc:
+        log.warning("Trade log write failed: %s", exc)
 
 
 # ── HEARTBEAT ─────────────────────────────────────────────────────────────────
@@ -107,10 +135,9 @@ async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManag
              symbol, entry_side, qty, entry,
              sig.sl_price, sig.tp1_price, sig.tp2_price, sig.reason)
 
-    # Entry — limit order one tick inside to maximise maker fill chance
-    tick  = entry * 0.0001   # 0.01% as a proxy tick
+    tick        = entry * 0.0001
     limit_price = entry - tick if sig.direction == 1 else entry + tick
-    order = await exchange.place_limit_order(symbol, entry_side, qty, round(limit_price, 4))
+    order       = await exchange.place_limit_order(symbol, entry_side, qty, round(limit_price, 4))
 
     state = TradeState(
         symbol      = symbol,
@@ -120,115 +147,132 @@ async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManag
         tp1_price   = sig.tp1_price,
         tp2_price   = sig.tp2_price,
         qty         = qty,
-        order_id    = str(order.get("orderId", "")),
+        order_id    = str(order.get("id", "")),
     )
     await risk.register_trade(state)
 
-    # Stop-loss
     await exchange.place_stop_loss(symbol, sl_side, qty, sig.sl_price)
 
-    # TP1 (half position)
     tp1_qty = round(qty * cfg.tp1_close_pct / 100, 6)
     await exchange.place_take_profit(symbol, tp_side, tp1_qty, sig.tp1_price)
 
-    # TP2 (remainder)
     tp2_qty = round(qty - tp1_qty, 6)
     await exchange.place_take_profit(symbol, tp_side, tp2_qty, sig.tp2_price)
 
     await send_telegram(
         f"{'🟢' if sig.direction==1 else '🔴'} {symbol} "
-        f"{'LONG' if sig.direction==1 else 'SHORT'} str={sig.strength}\n"
+        f"{'LONG' if sig.direction==1 else 'SHORT'} str={sig.strength}/5\n"
         f"Entry≈{entry:.4f}  SL={sig.sl_price:.4f}\n"
         f"TP1={sig.tp1_price:.4f}  TP2={sig.tp2_price:.4f}\n"
         f"{sig.reason}"
     )
 
 
-async def check_exit(symbol: str, current_price: float,
+async def check_exit(symbol: str, current_price: float, current_atr: float,
                      exchange: ExchangeClient, risk: RiskManager):
     """
-    Manual exit check in case stop-market orders aren't triggering
-    (paper mode) or for trailing stop logic after TP1.
+    Paper-mode exit handler — called on every closed primary bar.
     In live mode the exchange handles SL/TP natively.
+    After TP1: moves SL to break-even and starts trailing by 1 ATR.
+    After SL hit: 15-minute cooldown before re-entering that symbol.
     """
     if not cfg.paper_trading:
-        return   # exchange handles exits in live mode
+        return
 
     trade = risk.get_open(symbol)
     if trade is None:
         return
 
     close_side = "SELL" if trade.direction == 1 else "BUY"
-    hit_sl   = (trade.direction ==  1 and current_price <= trade.sl_price)
-    hit_sl  |= (trade.direction == -1 and current_price >= trade.sl_price)
-    hit_tp1  = (not trade.tp1_closed and
-                ((trade.direction ==  1 and current_price >= trade.tp1_price) or
-                 (trade.direction == -1 and current_price <= trade.tp1_price)))
-    hit_tp2  = (trade.tp1_closed and
-                ((trade.direction ==  1 and current_price >= trade.tp2_price) or
-                 (trade.direction == -1 and current_price <= trade.tp2_price)))
+    hit_sl  = (trade.direction ==  1 and current_price <= trade.sl_price)
+    hit_sl |= (trade.direction == -1 and current_price >= trade.sl_price)
+    hit_tp1 = (not trade.tp1_closed and
+               ((trade.direction ==  1 and current_price >= trade.tp1_price) or
+                (trade.direction == -1 and current_price <= trade.tp1_price)))
+    hit_tp2 = (trade.tp1_closed and
+               ((trade.direction ==  1 and current_price >= trade.tp2_price) or
+                (trade.direction == -1 and current_price <= trade.tp2_price)))
 
     if hit_sl:
-        qty = trade.qty if not trade.tp1_closed else trade.qty * (1 - cfg.tp1_close_pct / 100)
-        log.info("[%s] [PAPER] SL hit @ %.4f", symbol, current_price)
-        await exchange.place_market_order(symbol, close_side, qty)
-        await risk.close_trade(symbol, current_price, qty)
-        await send_telegram(f"🛑 {symbol} SL hit @ {current_price:.4f}")
+        remaining = (trade.qty if not trade.tp1_closed
+                     else round(trade.qty * (1 - cfg.tp1_close_pct / 100), 6))
+        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        log.info("[%s] [PAPER] SL hit @ %.4f  pnl=%.2f%%", symbol, current_price, pnl_pct * 100)
+        await exchange.place_market_order(symbol, close_side, remaining)
+        _log_trade(symbol, trade.direction, trade.entry_price, current_price, pnl_pct, "SL")
+        await risk.close_trade(symbol, current_price, remaining, is_sl=True)
+        await send_telegram(f"🛑 {symbol} SL hit @ {current_price:.4f}  ({pnl_pct:.2%})")
 
     elif hit_tp1:
         tp1_qty = round(trade.qty * cfg.tp1_close_pct / 100, 6)
-        log.info("[%s] [PAPER] TP1 hit @ %.4f (closing %.1f%%)", symbol, current_price, cfg.tp1_close_pct)
+        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        log.info("[%s] [PAPER] TP1 hit @ %.4f  (closing %.0f%%)", symbol, current_price, cfg.tp1_close_pct)
         await exchange.place_market_order(symbol, close_side, tp1_qty)
-        await risk.partial_close(symbol)
-        await send_telegram(f"✅ {symbol} TP1 hit @ {current_price:.4f} ({cfg.tp1_close_pct:.0f}% closed)")
+        await risk.partial_close(symbol, current_price, tp1_qty)
+        await risk.move_sl_to_breakeven(symbol)
+        await send_telegram(
+            f"✅ {symbol} TP1 @ {current_price:.4f}  ({pnl_pct:.2%})\n"
+            f"SL moved to break-even — trailing remaining position"
+        )
 
     elif hit_tp2:
         remaining = round(trade.qty * (1 - cfg.tp1_close_pct / 100), 6)
-        log.info("[%s] [PAPER] TP2 hit @ %.4f (full close)", symbol, current_price)
+        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        log.info("[%s] [PAPER] TP2 hit @ %.4f  full close", symbol, current_price)
         await exchange.place_market_order(symbol, close_side, remaining)
+        _log_trade(symbol, trade.direction, trade.entry_price, current_price, pnl_pct, "TP2")
         await risk.close_trade(symbol, current_price, remaining)
-        await send_telegram(f"🏆 {symbol} TP2 hit @ {current_price:.4f} — trade closed")
+        await send_telegram(f"🏆 {symbol} TP2 @ {current_price:.4f}  ({pnl_pct:.2%}) — full close")
+
+    elif trade.tp1_closed and current_atr > 0:
+        # Ratchet SL toward price after TP1 — locks in gains without forcing early exit
+        trail = (current_price - current_atr if trade.direction == 1
+                 else current_price + current_atr)
+        await risk.trail_sl(symbol, trail)
 
 
 # ── PER-SYMBOL HANDLER ────────────────────────────────────────────────────────
 
-class SymbolHandler:
-    """Holds state for one symbol and its two timeframe buffers."""
+async def _noop_bar(symbol: str, df: pd.DataFrame) -> None:
+    """Placeholder callback for confirm-interval stream — buffer updates automatically."""
+    pass
 
+
+class SymbolHandler:
     def __init__(self, symbol: str, exchange: ExchangeClient, risk: RiskManager):
         self.symbol   = symbol
         self.exchange = exchange
         self.risk     = risk
 
     async def on_primary_bar(self, symbol: str, df: pd.DataFrame):
-        """Called on every closed 1m bar."""
-        # Exit check (paper mode only)
+        """Called on every closed primary (1m) bar."""
         if df.empty:
             return
-        current_price = df["close"].iat[-1]
-        await check_exit(symbol, current_price, self.exchange, self.risk)
 
-        # Skip entry if already in a trade on this symbol
+        current_price = float(df["close"].iat[-1])
+
+        atr_series  = _atr(df, cfg.atr_period)
+        atr_val     = float(atr_series.iat[-1])
+        current_atr = atr_val if atr_val == atr_val else 0.0  # NaN guard
+
+        await check_exit(symbol, current_price, current_atr, self.exchange, self.risk)
+
         if self.risk.get_open(symbol) is not None:
             return
 
-        # Get 5m data for trend confirmation
         confirm_df = self.exchange.get_df(symbol, cfg.confirm_interval)
-
         sig = compute_signal(df, confirm_df if not confirm_df.empty else None)
 
-        if sig.direction != 0 and sig.strength >= 2:
+        if sig.direction != 0 and sig.strength >= 3:
             await open_trade(symbol, sig, self.exchange, self.risk)
 
     async def start_streams(self):
-        """Launch both timeframe streams concurrently."""
         await asyncio.gather(
             self.exchange.stream_symbol(
                 self.symbol, cfg.kline_interval, self.on_primary_bar
             ),
             self.exchange.stream_symbol(
-                self.symbol, cfg.confirm_interval,
-                lambda s, df: asyncio.sleep(0)   # just keeps 5m buffer updated
+                self.symbol, cfg.confirm_interval, _noop_bar
             ),
         )
 
@@ -236,7 +280,6 @@ class SymbolHandler:
 # ── STATUS LOGGER ─────────────────────────────────────────────────────────────
 
 async def status_loop(risk: RiskManager):
-    """Log a status summary every 5 minutes."""
     while True:
         await asyncio.sleep(300)
         log.info("── STATUS  open=%d  daily_pnl=%.2f%%  symbols=%s",
@@ -249,14 +292,13 @@ async def status_loop(risk: RiskManager):
 async def main():
     log.info("═══ Crypto Scalper Bot starting (paper=%s) ═══", cfg.paper_trading)
     log.info("Symbols: %s", cfg.symbols)
-    log.info("Intervals: %s (primary) / %s (confirm)", cfg.kline_interval, cfg.confirm_interval)
+    log.info("Intervals: %sm (primary) / %sm (confirm)", cfg.kline_interval, cfg.confirm_interval)
 
     exchange = ExchangeClient()
     risk     = RiskManager()
 
     await exchange.connect()
 
-    # Bootstrap historical bars for each symbol before streaming
     log.info("Loading historical bars…")
     await asyncio.gather(*[
         asyncio.gather(
@@ -272,7 +314,8 @@ async def main():
     await send_telegram(
         f"🚀 Crypto Scalper started\n"
         f"Mode: {'PAPER' if cfg.paper_trading else '🔴 LIVE'}\n"
-        f"Symbols: {', '.join(cfg.symbols)}"
+        f"Symbols: {', '.join(cfg.symbols)}\n"
+        f"Signal threshold: strength ≥ 3/5"
     )
 
     try:
