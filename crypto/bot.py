@@ -159,12 +159,26 @@ async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManag
     tp2_qty = round(qty - tp1_qty, 6)
     await exchange.place_take_profit(symbol, tp_side, tp2_qty, sig.tp2_price)
 
+    max_risk_usd  = qty * abs(entry - sig.sl_price)
+    tp1_qty_msg   = round(qty * cfg.tp1_close_pct / 100, 6)
+    tp2_qty_msg   = round(qty - tp1_qty_msg, 6)
+    tp1_usd       = tp1_qty_msg * abs(sig.tp1_price - entry)
+    tp2_usd       = tp2_qty_msg * abs(sig.tp2_price - entry)
+    target_usd    = tp1_usd + tp2_usd
+    rr            = target_usd / max_risk_usd if max_risk_usd > 0 else 0
+    stars         = "⭐" * sig.strength
+
     await send_telegram(
-        f"{'🟢' if sig.direction==1 else '🔴'} {symbol} "
-        f"{'LONG' if sig.direction==1 else 'SHORT'} str={sig.strength}/5\n"
-        f"Entry≈{entry:.4f}  SL={sig.sl_price:.4f}\n"
-        f"TP1={sig.tp1_price:.4f}  TP2={sig.tp2_price:.4f}\n"
-        f"{sig.reason}"
+        f"{'📈 LONG' if sig.direction==1 else '📉 SHORT'}  {symbol}  {stars} ({sig.strength}/5)\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"Entry:  {entry:,.4f}\n"
+        f"Stop:   {sig.sl_price:,.4f}\n"
+        f"TP1:    {sig.tp1_price:,.4f}\n"
+        f"TP2:    {sig.tp2_price:,.4f}\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"Risk:    -${max_risk_usd:.2f}\n"
+        f"Target:  +${target_usd:.2f}  (R:R {rr:.1f}×)\n"
+        f"Qty:     {qty:.6f}"
     )
 
 
@@ -196,33 +210,54 @@ async def check_exit(symbol: str, current_price: float, current_atr: float,
     if hit_sl:
         remaining = (trade.qty if not trade.tp1_closed
                      else round(trade.qty * (1 - cfg.tp1_close_pct / 100), 6))
-        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
-        log.info("[%s] [PAPER] SL hit @ %.4f  pnl=%.2f%%", symbol, current_price, pnl_pct * 100)
+        pnl_pct  = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        usd_loss = remaining * abs(current_price - trade.entry_price)
+        log.info("[%s] SL hit @ %.4f  -$%.2f (%.2f%%)", symbol, current_price, usd_loss, pnl_pct * 100)
         await exchange.place_market_order(symbol, close_side, remaining)
         _log_trade(symbol, trade.direction, trade.entry_price, current_price, pnl_pct, "SL")
         await risk.close_trade(symbol, current_price, remaining, is_sl=True)
-        await send_telegram(f"🛑 {symbol} SL hit @ {current_price:.4f}  ({pnl_pct:.2%})")
+        await send_telegram(
+            f"🛑 STOP LOSS — {symbol} {'LONG' if trade.direction==1 else 'SHORT'}\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"{trade.entry_price:,.4f} → {current_price:,.4f}\n"
+            f"Loss:  -${usd_loss:.2f}  ({pnl_pct:.2%})\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"⏸ 15-min cooldown  |  Today: {risk.daily_pnl:.2%}"
+        )
 
     elif hit_tp1:
         tp1_qty = round(trade.qty * cfg.tp1_close_pct / 100, 6)
-        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
-        log.info("[%s] [PAPER] TP1 hit @ %.4f  (closing %.0f%%)", symbol, current_price, cfg.tp1_close_pct)
+        pnl_pct  = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        usd_gain = tp1_qty * abs(current_price - trade.entry_price)
+        log.info("[%s] TP1 hit @ %.4f  +$%.2f (%.2f%%)", symbol, current_price, usd_gain, pnl_pct * 100)
         await exchange.place_market_order(symbol, close_side, tp1_qty)
         await risk.partial_close(symbol, current_price, tp1_qty)
         await risk.move_sl_to_breakeven(symbol)
         await send_telegram(
-            f"✅ {symbol} TP1 @ {current_price:.4f}  ({pnl_pct:.2%})\n"
-            f"SL moved to break-even — trailing remaining position"
+            f"✅ TP1 HIT — {symbol} {'LONG' if trade.direction==1 else 'SHORT'}\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"{trade.entry_price:,.4f} → {current_price:,.4f}  ({pnl_pct:.2%})\n"
+            f"Profit:  +${usd_gain:.2f}  ({cfg.tp1_close_pct:.0f}% closed)\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"🔒 SL locked at break-even · trailing remainder"
         )
 
     elif hit_tp2:
         remaining = round(trade.qty * (1 - cfg.tp1_close_pct / 100), 6)
-        pnl_pct = (current_price - trade.entry_price) / trade.entry_price * trade.direction
-        log.info("[%s] [PAPER] TP2 hit @ %.4f  full close", symbol, current_price)
+        pnl_pct  = (current_price - trade.entry_price) / trade.entry_price * trade.direction
+        usd_gain = remaining * abs(current_price - trade.entry_price)
+        log.info("[%s] TP2 hit @ %.4f  +$%.2f (%.2f%%) — full close", symbol, current_price, usd_gain, pnl_pct * 100)
         await exchange.place_market_order(symbol, close_side, remaining)
         _log_trade(symbol, trade.direction, trade.entry_price, current_price, pnl_pct, "TP2")
         await risk.close_trade(symbol, current_price, remaining)
-        await send_telegram(f"🏆 {symbol} TP2 @ {current_price:.4f}  ({pnl_pct:.2%}) — full close")
+        await send_telegram(
+            f"🏆 TP2 HIT — {symbol} {'LONG' if trade.direction==1 else 'SHORT'}  FULL CLOSE\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"{trade.entry_price:,.4f} → {current_price:,.4f}  ({pnl_pct:.2%})\n"
+            f"Profit:  +${usd_gain:.2f}\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"Today: {risk.daily_pnl:.2%}"
+        )
 
     elif trade.tp1_closed and current_atr > 0:
         # Ratchet SL toward price after TP1 — locks in gains without forcing early exit
@@ -312,10 +347,12 @@ async def main():
     handlers = [SymbolHandler(sym, exchange, risk) for sym in cfg.symbols]
 
     await send_telegram(
-        f"🚀 Crypto Scalper started\n"
-        f"Mode: {'PAPER' if cfg.paper_trading else '🔴 LIVE'}\n"
-        f"Symbols: {', '.join(cfg.symbols)}\n"
-        f"Signal threshold: strength ≥ 3/5"
+        f"🚀 Bot {'PAPER' if cfg.paper_trading else '🔴 LIVE'} — Kraken\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"Symbols:  {' · '.join(cfg.symbols)}\n"
+        f"Risk:     {cfg.risk_pct}% per trade\n"
+        f"Signal:   strength ≥ 3/5\n"
+        f"Max open: {cfg.max_open_trades} trades"
     )
 
     try:
