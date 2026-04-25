@@ -12,6 +12,11 @@ venv/
 # Node
 node_modules/
 
+# Claude Code runtime files
+.claude/**/logs/
+.claude/**/state.json
+.claude/**/whisper/
+
 # Misc
 .DS_Store
 *.log
