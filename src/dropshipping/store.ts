@@ -1,12 +1,14 @@
 import { join } from "path";
 import { mkdir } from "fs/promises";
 
-const DATA_DIR = join(process.cwd(), ".claude", "claudeclaw", "dropshipping");
+export const DATA_DIR = join(process.cwd(), ".claude", "claudeclaw", "dropshipping");
 const STORE_FILE = join(DATA_DIR, "store.json");
 const PRODUCTS_FILE = join(DATA_DIR, "products.json");
 const ORDERS_FILE = join(DATA_DIR, "orders.json");
 const ADS_FILE = join(DATA_DIR, "ads.json");
 const ANALYTICS_FILE = join(DATA_DIR, "analytics.json");
+const REFUNDS_FILE = join(DATA_DIR, "refunds.json");
+const TIKTOK_FILE = join(DATA_DIR, "tiktok-posts.json");
 
 export interface Product {
   id: string;
@@ -249,4 +251,120 @@ export async function recalcAnalytics(): Promise<Analytics> {
 
 export function formatCurrency(amount: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+}
+
+// ─── Refunds ───────────────────────────────────────────────────────────────
+
+export interface RefundRequest {
+  id: string;
+  orderId: string;
+  productId: string;
+  productName: string;
+  customerEmail: string;
+  amount: number;
+  reason: string;
+  status: "pending" | "approved" | "processed" | "denied";
+  processorRefundId: string | null;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function loadRefunds(): Promise<RefundRequest[]> {
+  await ensureDir();
+  try {
+    return await Bun.file(REFUNDS_FILE).json();
+  } catch {
+    return [];
+  }
+}
+
+export async function saveRefunds(refunds: RefundRequest[]): Promise<void> {
+  await ensureDir();
+  await Bun.write(REFUNDS_FILE, JSON.stringify(refunds, null, 2) + "\n");
+}
+
+export async function addRefund(refund: Omit<RefundRequest, "id" | "createdAt" | "updatedAt" | "processorRefundId">): Promise<RefundRequest> {
+  const refunds = await loadRefunds();
+  const now = new Date().toISOString();
+  const newRefund: RefundRequest = {
+    ...refund,
+    id: `REF-${Date.now()}`,
+    processorRefundId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  refunds.push(newRefund);
+  await saveRefunds(refunds);
+  return newRefund;
+}
+
+export async function updateRefund(id: string, updates: Partial<RefundRequest>): Promise<RefundRequest | null> {
+  const refunds = await loadRefunds();
+  const idx = refunds.findIndex((r) => r.id === id);
+  if (idx === -1) return null;
+  refunds[idx] = { ...refunds[idx], ...updates, updatedAt: new Date().toISOString() };
+  await saveRefunds(refunds);
+  return refunds[idx];
+}
+
+// ─── TikTok Posts ──────────────────────────────────────────────────────────
+
+export interface TikTokPost {
+  id: string;
+  productId: string;
+  productName: string;
+  script: string;
+  caption: string;
+  hashtags: string[];
+  hookText: string;
+  videoUrl: string | null;
+  publishId: string | null;
+  status: "draft" | "scheduled" | "posted" | "failed";
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  scheduledFor: string | null;
+  postedAt: string | null;
+  createdAt: string;
+}
+
+export async function loadTikTokPosts(): Promise<TikTokPost[]> {
+  await ensureDir();
+  try {
+    return await Bun.file(TIKTOK_FILE).json();
+  } catch {
+    return [];
+  }
+}
+
+export async function saveTikTokPosts(posts: TikTokPost[]): Promise<void> {
+  await ensureDir();
+  await Bun.write(TIKTOK_FILE, JSON.stringify(posts, null, 2) + "\n");
+}
+
+export async function addTikTokPost(post: Omit<TikTokPost, "id" | "createdAt" | "views" | "likes" | "comments" | "shares">): Promise<TikTokPost> {
+  const posts = await loadTikTokPosts();
+  const newPost: TikTokPost = {
+    ...post,
+    id: crypto.randomUUID(),
+    views: 0,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    createdAt: new Date().toISOString(),
+  };
+  posts.push(newPost);
+  await saveTikTokPosts(posts);
+  return newPost;
+}
+
+export async function updateTikTokPost(id: string, updates: Partial<TikTokPost>): Promise<TikTokPost | null> {
+  const posts = await loadTikTokPosts();
+  const idx = posts.findIndex((p) => p.id === id);
+  if (idx === -1) return null;
+  posts[idx] = { ...posts[idx], ...updates };
+  await saveTikTokPosts(posts);
+  return posts[idx];
 }
