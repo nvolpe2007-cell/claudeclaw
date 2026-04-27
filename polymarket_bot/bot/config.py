@@ -57,6 +57,11 @@ class Config:
     dashboard_port: int = 8080
     dashboard_enabled: bool = True
 
+    # BTC direction arbitrage
+    direction_enabled: bool = True
+    direction_min_edge_cents: float = 4.0   # minimum model vs market divergence in cents
+    direction_max_minutes: float = 60.0     # only trade markets resolving within this window
+
     # Retry backoff
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 60.0
@@ -112,4 +117,7 @@ def load_config() -> Config:
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
         dashboard_port=_int("DASHBOARD_PORT", 8080),
         dashboard_enabled=_bool("DASHBOARD_ENABLED", True),
+        direction_enabled=_bool("DIRECTION_ENABLED", True),
+        direction_min_edge_cents=_float("DIRECTION_MIN_EDGE_CENTS", 4.0),
+        direction_max_minutes=_float("DIRECTION_MAX_MINUTES", 60.0),
     )

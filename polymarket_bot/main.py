@@ -7,6 +7,8 @@ import signal
 import sys
 import time
 
+from bot.btc_direction import BtcDirectionScanner, DirectionExecutor
+from bot.btc_price import BtcPriceFeed
 from bot.client import PolyClient
 from bot.config import load_config
 from bot.dashboard import Dashboard
@@ -38,7 +40,7 @@ def setup_logging() -> None:
 
 
 class ValueBettingCoordinator:
-    """Coordinator for fast market scanning + value betting execution."""
+    """Coordinator for fast market scanning + value betting + direction arbitrage."""
 
     def __init__(
         self,
@@ -60,9 +62,15 @@ class ValueBettingCoordinator:
         self._detector = OpportunityDetector(self._graph, config)
         self._executor = ValueExecutor(client, config, risk, notifier)
 
+        # BTC direction arbitrage
+        self._price_feed = BtcPriceFeed()
+        self._dir_scanner = BtcDirectionScanner(client, self._price_feed, config)
+        self._dir_executor = DirectionExecutor(client, config, risk, notifier)
+
         self._shutdown = asyncio.Event()
         self._last_rebalance = 0.0
         self._last_summary = 0.0
+        self._last_price_refresh = 0.0
 
     async def run(self) -> None:
         mode = " [DRY RUN]" if self._config.dry_run else ""
@@ -73,6 +81,12 @@ class ValueBettingCoordinator:
             logger.info("Wallet balance/allowance: %s", bal)
         except Exception as exc:
             logger.warning("Failed to fetch balance: %s", exc)
+
+        # Prime the BTC price feed before first scan
+        try:
+            await self._price_feed.refresh()
+        except Exception as exc:
+            logger.warning("Initial BTC price fetch failed: %s", exc)
 
         while not self._shutdown.is_set():
             if self._risk.is_daily_limit_breached():
@@ -90,6 +104,15 @@ class ValueBettingCoordinator:
         await self._shutdown_all()
 
     async def _fast_scan_loop(self) -> None:
+        # Refresh BTC price every 10 seconds
+        now = time.time()
+        if now - self._last_price_refresh >= 10:
+            try:
+                await self._price_feed.refresh()
+                self._last_price_refresh = now
+            except Exception as exc:
+                logger.warning("BTC price refresh failed: %s", exc)
+
         all_markets = await self._scanner.scan()
 
         for opp in all_markets:
@@ -104,6 +127,18 @@ class ValueBettingCoordinator:
                 await self._executor.process_opportunity(opp)
             except Exception as exc:
                 logger.error("Execution error for %s: %s", opp.token_id[:12], exc)
+
+        # Direction arbitrage leg
+        if self._config.direction_enabled:
+            try:
+                dir_opps = await self._dir_scanner.scan()
+                for opp in dir_opps:
+                    if self._risk.is_daily_limit_breached():
+                        break
+                    await self._dir_executor.process(opp)
+                await self._dir_executor.expire_positions()
+            except Exception as exc:
+                logger.error("Direction scan/execute error: %s", exc, exc_info=True)
 
         now = time.time()
 
@@ -129,12 +164,16 @@ class ValueBettingCoordinator:
             )
             self._last_summary = now
 
+        snap = self._price_feed.latest()
+        btc_str = f" | BTC=${snap.price:,.0f}" if snap else ""
         logger.info(
-            "Scan: %d BTC markets, %d opps | Positions: %d | Daily P&L: %+.2f USDC%s",
+            "Scan: %d BTC markets, %d opps | Direction: %d pos | Positions: %d | Daily P&L: %+.2f USDC%s%s",
             len(all_markets),
             len(opportunities),
+            len(self._dir_executor.positions),
             len(self._executor.positions),
             self._risk.get_daily_pnl(),
+            btc_str,
             " [DRY RUN]" if self._config.dry_run else "",
         )
 
