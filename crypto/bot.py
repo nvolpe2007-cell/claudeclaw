@@ -186,16 +186,18 @@ async def heartbeat_loop():
 
 # ── TRADE EXECUTION ───────────────────────────────────────────────────────────
 
-async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManager):
+async def open_trade(symbol: str, sig, exchange: ExchangeClient, risk: RiskManager,
+                     symbol_cfg=None):
     """Place entry + SL + TP1 + TP2 orders."""
     allowed, reason = await risk.can_open(symbol)
     if not allowed:
         log.info("[%s] Skip: %s", symbol, reason)
         return
 
-    balance = await exchange.get_balance()
-    entry   = await exchange.get_ticker_price(symbol)
-    qty     = risk.size_position(balance, entry, sig.sl_price)
+    balance          = await exchange.get_balance()
+    entry            = await exchange.get_ticker_price(symbol)
+    risk_pct_override = symbol_cfg.risk_pct if symbol_cfg is not None else None
+    qty              = risk.size_position(balance, entry, sig.sl_price, risk_pct_override)
 
     if qty <= 0:
         log.warning("[%s] Position size = 0, skipping", symbol)
@@ -366,9 +368,11 @@ async def _noop_bar(symbol: str, df: pd.DataFrame) -> None:
 
 class SymbolHandler:
     def __init__(self, symbol: str, exchange: ExchangeClient, risk: RiskManager):
-        self.symbol   = symbol
-        self.exchange = exchange
-        self.risk     = risk
+        self.symbol     = symbol
+        self.exchange   = exchange
+        self.risk       = risk
+        self.is_meme    = cfg.is_meme(symbol)
+        self.symbol_cfg = cfg.meme_cfg() if self.is_meme else None
 
     async def on_primary_bar(self, symbol: str, df: pd.DataFrame):
         """Called on every closed primary (1m) bar."""
@@ -386,11 +390,14 @@ class SymbolHandler:
         if self.risk.get_open(symbol) is not None:
             return
 
-        confirm_df = self.exchange.get_df(symbol, cfg.confirm_interval)
-        sig = compute_signal(df, confirm_df if not confirm_df.empty else None)
+        confirm_df      = self.exchange.get_df(symbol, cfg.confirm_interval)
+        min_strength    = 4 if self.is_meme else 3
+        sig = compute_signal(df, confirm_df if not confirm_df.empty else None,
+                             symbol_cfg=self.symbol_cfg)
 
-        if sig.direction != 0 and sig.strength >= 3:
-            await open_trade(symbol, sig, self.exchange, self.risk)
+        if sig.direction != 0 and sig.strength >= min_strength:
+            await open_trade(symbol, sig, self.exchange, self.risk,
+                             symbol_cfg=self.symbol_cfg)
 
     async def start_streams(self):
         await asyncio.gather(
@@ -437,12 +444,15 @@ async def main():
 
     handlers = [SymbolHandler(sym, exchange, risk) for sym in cfg.symbols]
 
+    meme_active = [s for s in cfg.symbols if cfg.is_meme(s)]
+    meme_note   = (f"\nMeme:     {' · '.join(meme_active)}  (0.5% risk · str≥4)"
+                   if meme_active else "")
     await send_telegram(
         f"🚀 Bot {'PAPER' if cfg.paper_trading else '🔴 LIVE'} — Kraken\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"Symbols:  {' · '.join(cfg.symbols)}\n"
         f"Risk:     {cfg.risk_pct}% per trade\n"
-        f"Signal:   strength ≥ 3/5\n"
+        f"Signal:   strength ≥ 3/5{meme_note}\n"
         f"Max open: {cfg.max_open_trades} trades"
     )
 

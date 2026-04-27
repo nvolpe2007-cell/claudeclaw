@@ -134,29 +134,66 @@ def _stoch_rsi(rsi: pd.Series, period: int = 14, k_smooth: int = 3, d_smooth: in
     return k, d
 
 
+# ── BREAKOUT SIGNAL (meme coins) ──────────────────────────────────────────────
+
+def _breakout(df: pd.DataFrame, _cfg) -> tuple[bool, bool]:
+    """
+    Detects a clean close above/below the N-bar high/low with a strong volume surge.
+    Used as an additional raw signal trigger for meme coins, which pump on breakouts
+    rather than smooth EMA trends.
+    """
+    LOOKBACK = 20
+    close, high, low, vol = df["close"], df["high"], df["low"], df["volume"]
+    vol_avg = vol.rolling(20).mean()
+    rsi     = _rsi(close, _cfg.rsi_period)
+
+    # Shift(1) so the breakout level is computed from bars *before* the current one
+    high_n = high.rolling(LOOKBACK).max().shift(1)
+    low_n  = low.rolling(LOOKBACK).min().shift(1)
+
+    cur_close  = close.iat[-1]
+    prev_close = close.iat[-2]
+    cur_vol    = vol.iat[-1]
+    cur_vol_avg = vol_avg.iat[-1]
+    cur_rsi    = rsi.iat[-1]
+    h_n        = high_n.iat[-1]
+    l_n        = low_n.iat[-1]
+
+    if any(np.isnan(v) for v in [h_n, l_n, cur_vol_avg, cur_rsi]) or cur_vol_avg == 0:
+        return False, False
+
+    vol_surge = cur_vol >= cur_vol_avg * 2.0
+    bull = prev_close < h_n and cur_close > h_n and vol_surge and cur_rsi < 70
+    bear = prev_close > l_n and cur_close < l_n and vol_surge and cur_rsi > 30
+    return bull, bear
+
+
 # ── MAIN SIGNAL FUNCTION ───────────────────────────────────────────────────────
 
-def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) -> SignalResult:
+def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None,
+                   symbol_cfg=None) -> SignalResult:
     """
     df:          primary TF OHLCV (1m)
     confirm_df:  higher TF OHLCV (5m) for trend filter
+    symbol_cfg:  optional per-symbol Config override (e.g. meme coin profile)
     """
+    _cfg  = symbol_cfg if symbol_cfg is not None else cfg
     _none = SignalResult(0, 0, 0.0, 0.0, 0.0, 0.0, "")
 
-    if len(df) < cfg.bars_required:
+    if len(df) < _cfg.bars_required:
         return _none
 
     c = df["close"]
 
     # ── INDICATORS ──────────────────────────────────────────────────────────
-    ema_f  = _ema(c, cfg.ema_fast)
-    ema_s  = _ema(c, cfg.ema_slow)
-    ema_t  = _ema(c, cfg.ema_trend)
-    rsi    = _rsi(c, cfg.rsi_period)
-    atr    = _atr(df, cfg.atr_period)
+    ema_f  = _ema(c, _cfg.ema_fast)
+    ema_s  = _ema(c, _cfg.ema_slow)
+    ema_t  = _ema(c, _cfg.ema_trend)
+    rsi    = _rsi(c, _cfg.rsi_period)
+    atr    = _atr(df, _cfg.atr_period)
     atr_avg = atr.rolling(20).mean()
-    adx    = _adx(df, cfg.adx_period)
-    st, st_dir = _supertrend(df, cfg.st_factor, cfg.st_period)
+    adx    = _adx(df, _cfg.adx_period)
+    st, st_dir = _supertrend(df, _cfg.st_factor, _cfg.st_period)
     vwap   = _vwap(df)
     vol_avg = df["volume"].rolling(20).mean()
     srsi_k, _ = _stoch_rsi(rsi)
@@ -184,20 +221,20 @@ def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) 
     # ── HIGHER-TF TREND FILTER ───────────────────────────────────────────────
     htf_bull = True
     htf_bear = True
-    if confirm_df is not None and len(confirm_df) >= cfg.ema_trend:
+    if confirm_df is not None and len(confirm_df) >= _cfg.ema_trend:
         htf_c     = confirm_df["close"]
-        htf_ema_f = _ema(htf_c, cfg.ema_fast).iat[-1]
-        htf_ema_s = _ema(htf_c, cfg.ema_slow).iat[-1]
-        htf_ema_t = _ema(htf_c, cfg.ema_trend).iat[-1]
+        htf_ema_f = _ema(htf_c, _cfg.ema_fast).iat[-1]
+        htf_ema_s = _ema(htf_c, _cfg.ema_slow).iat[-1]
+        htf_ema_t = _ema(htf_c, _cfg.ema_trend).iat[-1]
         if not any(np.isnan(v) for v in [htf_ema_f, htf_ema_s, htf_ema_t]):
             htf_bull = htf_ema_f > htf_ema_s > htf_ema_t
             htf_bear = htf_ema_f < htf_ema_s < htf_ema_t
 
     # ── HARD FILTERS (signal aborted if either fails) ────────────────────────
-    adx_ok = cur_adx > cfg.adx_min
+    adx_ok = cur_adx > _cfg.adx_min
     atr_ok = (not np.isnan(cur_atr_avg) and
               cur_atr_avg > 0 and
-              cfg.atr_lo_mult <= (cur_atr / cur_atr_avg) <= cfg.atr_hi_mult)
+              _cfg.atr_lo_mult <= (cur_atr / cur_atr_avg) <= _cfg.atr_hi_mult)
 
     if not adx_ok or not atr_ok:
         return _none
@@ -217,12 +254,25 @@ def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) 
 
     raw_bull = ((st_flip_bull or ema_x_bull) and
                 st_bull and ema_bull_1m and
-                cur_rsi > cfg.rsi_os and cur_rsi < cfg.rsi_ob and
+                cur_rsi > _cfg.rsi_os and cur_rsi < _cfg.rsi_ob and
                 rsi_slope_bull)
     raw_bear = ((st_flip_bear or ema_x_bear) and
                 st_bear and ema_bear_1m and
-                cur_rsi < cfg.rsi_ob and cur_rsi > cfg.rsi_os and
+                cur_rsi < _cfg.rsi_ob and cur_rsi > _cfg.rsi_os and
                 rsi_slope_bear)
+
+    trigger_type = "ST-flip" if (st_flip_bull or st_flip_bear) else "EMA-X"
+
+    # ── BREAKOUT SIGNAL (meme coins only) ────────────────────────────────────
+    # Meme coins pump on volume breakouts before EMA trends form; check separately.
+    if not raw_bull and not raw_bear and symbol_cfg is not None:
+        bo_bull, bo_bear = _breakout(df, _cfg)
+        if bo_bull:
+            raw_bull     = True
+            trigger_type = "BREAKOUT"
+        elif bo_bear:
+            raw_bear     = True
+            trigger_type = "BREAKOUT"
 
     if not raw_bull and not raw_bear:
         return _none
@@ -231,7 +281,7 @@ def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) 
 
     # ── QUALITY SCORE (0–5, need ≥ 3) ───────────────────────────────────────
     # Extension: not overextended from Supertrend
-    ext_ok = abs(cur_close - cur_st) < cur_atr * cfg.ext_max_atr
+    ext_ok = abs(cur_close - cur_st) < cur_atr * _cfg.ext_max_atr
 
     # Higher-TF trend aligned
     htf_align = htf_bull if direction == 1 else htf_bear
@@ -254,9 +304,9 @@ def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) 
         return _none
 
     # ── PRICE LEVELS ────────────────────────────────────────────────────────
-    sl_dist  = cur_atr * cfg.sl_atr
-    tp1_dist = cur_atr * cfg.tp1_atr
-    tp2_dist = cur_atr * cfg.tp2_atr
+    sl_dist  = cur_atr * _cfg.sl_atr
+    tp1_dist = cur_atr * _cfg.tp1_atr
+    tp2_dist = cur_atr * _cfg.tp2_atr
 
     if direction == 1:
         sl  = cur_close - sl_dist
@@ -272,7 +322,7 @@ def compute_signal(df: pd.DataFrame, confirm_df: Optional[pd.DataFrame] = None) 
         f"{'LONG' if direction==1 else 'SHORT'} str={score}/5 "
         f"ADX={cur_adx:.1f} RSI={cur_rsi:.1f} SRSI={srsi_str} "
         f"VWAP={'✓' if vwap_ok else '✗'} VOL={'✓' if vol_surge else '✗'} "
-        f"{'ST-flip' if (st_flip_bull or st_flip_bear) else 'EMA-X'}"
+        f"{trigger_type}"
     )
 
     return SignalResult(direction, score, cur_atr, sl, tp1, tp2, reason)

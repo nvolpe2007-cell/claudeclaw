@@ -35,9 +35,11 @@ class RiskManager:
 
     # ── POSITION SIZING ────────────────────────────────────────────────────────
 
-    def size_position(self, account_balance: float, entry: float, sl: float) -> float:
+    def size_position(self, account_balance: float, entry: float, sl: float,
+                      risk_pct_override: float = None) -> float:
         """qty = (account × risk_pct%) / |entry - sl|"""
-        risk_amount = account_balance * (cfg.risk_pct / 100)
+        risk_pct    = risk_pct_override if risk_pct_override is not None else cfg.risk_pct
+        risk_amount = account_balance * (risk_pct / 100)
         sl_dist = abs(entry - sl)
         if sl_dist == 0:
             return 0.0

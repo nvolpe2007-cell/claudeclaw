@@ -1,4 +1,5 @@
 import os
+import dataclasses
 from dataclasses import dataclass, field
 from typing import List
 from dotenv import load_dotenv
@@ -18,6 +19,13 @@ class Config:
     symbols: List[str] = field(default_factory=lambda: [
         s.strip() for s in
         os.getenv("SYMBOLS", "XBT/USD,ETH/USD,SOL/USD,XRP/USD").split(",")
+    ])
+
+    # Meme coin symbols get a separate tuned parameter profile (lower risk, wider ATR gates)
+    meme_symbols: List[str] = field(default_factory=lambda: [
+        s.strip() for s in
+        os.getenv("MEME_SYMBOLS", "DOGE/USD,SHIB/USD,PEPE/USD,FLOKI/USD").split(",")
+        if s.strip()
     ])
 
     # ── Signal parameters ─────────────────────────────────────────────────────
@@ -58,6 +66,23 @@ class Config:
     # ── Heartbeat ─────────────────────────────────────────────────────────────
     db_url:          str   = os.getenv("DATABASE_URL", "")
     heartbeat_secs:  int   = int(os.getenv("HEARTBEAT_SECS", "30"))
+
+    def is_meme(self, symbol: str) -> bool:
+        return symbol in self.meme_symbols
+
+    def meme_cfg(self) -> "Config":
+        """Return a copy of this config with parameters tuned for meme coin volatility."""
+        return dataclasses.replace(
+            self,
+            adx_min      = 12.0,   # meme markets are choppier
+            atr_lo_mult  = 0.3,    # allow low-volatility accumulation periods
+            atr_hi_mult  = 6.0,    # meme spikes can be extreme
+            sl_atr       = 2.0,    # wider stop to survive noise
+            tp1_atr      = 2.0,    # take partial profit faster on spikes
+            tp2_atr      = 5.0,    # let runners run — meme pumps extend far
+            ext_max_atr  = 3.0,    # memes extend well beyond normal limits
+            risk_pct     = 0.5,    # half position size for gap/rug risk
+        )
 
 
 cfg = Config()
