@@ -1,0 +1,118 @@
+/* ── Keyframes ───────────────────────────────────────────── */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes goldShimmer {
+  0%   { background-position: -300% center; }
+  100% { background-position: 300% center; }
+}
+
+@keyframes scrollDrop {
+  0%   { transform: scaleY(0); transform-origin: top; opacity: 1; }
+  50%  { transform: scaleY(1); transform-origin: top; opacity: 1; }
+  51%  { transform: scaleY(1); transform-origin: bottom; }
+  100% { transform: scaleY(0); transform-origin: bottom; opacity: 0.3; }
+}
+
+@keyframes drawIn {
+  from { stroke-dashoffset: var(--path-length); }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes subtlePulse {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; }
+}
+
+/* ── Scroll Reveal ───────────────────────────────────────── */
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(28px);
+    transition:
+      opacity 0.7s var(--ease-out),
+      transform 0.7s var(--ease-out);
+    transition-delay: var(--delay, 0s);
+  }
+
+  [data-reveal].revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Hero entrance animations */
+  .hero-overline {
+    animation: fadeUp 0.7s var(--ease-out) 0.1s both;
+  }
+
+  .hero-title {
+    animation: fadeUp 0.8s var(--ease-out) 0.25s both;
+  }
+
+  .hero-tagline {
+    animation: fadeUp 0.7s var(--ease-out) 0.45s both;
+  }
+
+  .hero-ctas {
+    animation: fadeUp 0.7s var(--ease-out) 0.6s both;
+  }
+
+  .hero-scroll {
+    animation: fadeIn 1s var(--ease-out) 1.2s both;
+  }
+
+  /* Hero title shimmer */
+  .shimmer-text {
+    background: linear-gradient(
+      90deg,
+      var(--white) 30%,
+      var(--gold) 45%,
+      var(--gold-light) 50%,
+      var(--gold) 55%,
+      var(--white) 70%
+    );
+    background-size: 300% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation:
+      fadeUp 0.8s var(--ease-out) 0.25s both,
+      goldShimmer 3s ease-in-out 1s 1 both;
+  }
+
+  /* House SVG drawing animation */
+  .house-path {
+    stroke-dasharray: var(--path-length);
+    stroke-dashoffset: var(--path-length);
+  }
+
+  .house-path.drawn {
+    /* Individual JS-driven offset, no transition — direct assignment */
+  }
+}
+
+/* Fallback: no animation if prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+
+  .shimmer-text {
+    color: var(--white);
+  }
+
+  .house-path {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+  }
+}
