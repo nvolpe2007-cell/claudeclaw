@@ -16,6 +16,8 @@ node_modules/
 .claude/**/logs/
 .claude/**/state.json
 .claude/**/whisper/
+.claude/**/daemon.pid
+.claude/statusline.cjs
 
 # Misc
 .DS_Store
