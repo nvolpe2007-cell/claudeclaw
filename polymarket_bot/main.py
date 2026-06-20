@@ -11,6 +11,7 @@ from bot.btc_direction import BtcDirectionScanner, DirectionExecutor
 from bot.btc_price import BtcPriceFeed
 from bot.client import PolyClient
 from bot.config import load_config
+from bot.copy_trader import CopyExecutor, CopyTraderScanner
 from bot.dashboard import Dashboard
 from bot.notifications import Notifier
 from bot.opportunity import OpportunityDetector
@@ -66,6 +67,11 @@ class ValueBettingCoordinator:
         self._price_feed = BtcPriceFeed()
         self._dir_scanner = BtcDirectionScanner(client, self._price_feed, config)
         self._dir_executor = DirectionExecutor(client, config, risk, notifier)
+
+        # Copy trading
+        self._copy_scanner = CopyTraderScanner(config)
+        self._copy_executor = CopyExecutor(client, config, risk, notifier)
+        self._last_copy_poll = 0.0
 
         self._shutdown = asyncio.Event()
         self._last_rebalance = 0.0
@@ -139,6 +145,20 @@ class ValueBettingCoordinator:
                 await self._dir_executor.expire_positions()
             except Exception as exc:
                 logger.error("Direction scan/execute error: %s", exc, exc_info=True)
+
+        # Copy-trading leg — polled on its own slower interval
+        if self._config.copy_trading_enabled:
+            now_copy = time.time()
+            if now_copy - self._last_copy_poll >= self._config.copy_poll_interval_sec:
+                self._last_copy_poll = now_copy
+                try:
+                    copy_opps = await self._copy_scanner.scan()
+                    for opp in copy_opps:
+                        if self._risk.is_daily_limit_breached():
+                            break
+                        await self._copy_executor.process(opp)
+                except Exception as exc:
+                    logger.error("Copy-trade scan/execute error: %s", exc, exc_info=True)
 
         now = time.time()
 
@@ -223,6 +243,9 @@ async def async_main() -> None:
     if not config.enable_value_betting:
         logger.warning("Value betting disabled in config — exiting")
         sys.exit(0)
+
+    if config.copy_trading_enabled and not config.copy_trader_wallets:
+        logger.warning("COPY_TRADING_ENABLED=true but COPY_TRADER_WALLETS is empty — copy trading will do nothing")
 
     client = PolyClient(config)
     loop = asyncio.get_running_loop()

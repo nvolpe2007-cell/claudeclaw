@@ -62,6 +62,13 @@ class Config:
     direction_min_edge_cents: float = 4.0   # minimum model vs market divergence in cents
     direction_max_minutes: float = 60.0     # only trade markets resolving within this window
 
+    # Copy trading (mirror specific wallets' positions)
+    copy_trading_enabled: bool = False
+    copy_trader_wallets: tuple[str, ...] = ()  # addresses to follow, e.g. from polymarket.com/leaderboard
+    copy_ratio: float = 0.1                    # mirror at this fraction of their position size
+    copy_max_position_usdc: float = 50.0       # cap per mirrored position
+    copy_poll_interval_sec: float = 15.0       # how often to check followed wallets for new trades
+
     # Retry backoff
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 60.0
@@ -120,4 +127,11 @@ def load_config() -> Config:
         direction_enabled=_bool("DIRECTION_ENABLED", True),
         direction_min_edge_cents=_float("DIRECTION_MIN_EDGE_CENTS", 4.0),
         direction_max_minutes=_float("DIRECTION_MAX_MINUTES", 60.0),
+        copy_trading_enabled=_bool("COPY_TRADING_ENABLED", False),
+        copy_trader_wallets=tuple(
+            w.strip().lower() for w in os.getenv("COPY_TRADER_WALLETS", "").split(",") if w.strip()
+        ),
+        copy_ratio=_float("COPY_RATIO", 0.1),
+        copy_max_position_usdc=_float("COPY_MAX_POSITION_USDC", 50.0),
+        copy_poll_interval_sec=_float("COPY_POLL_INTERVAL_SEC", 15.0),
     )
