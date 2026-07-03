@@ -1,0 +1,21 @@
+{
+  "name": "renovation-ranker",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Property exterior renovation ranker - scans addresses, scores exterior condition via Claude Vision, ranks renovation leads for contractors",
+  "scripts": {
+    "scan": "bun run src/cli.ts scan-list",
+    "serve": "bun run src/cli.ts serve",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.9",
+    "@types/pg": "^8.15.0",
+    "typescript": "^5.9.0"
+  }
+}
