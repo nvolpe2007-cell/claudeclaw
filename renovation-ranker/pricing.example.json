@@ -1,0 +1,12 @@
+{
+  "_comment": "Fill in CURRENT prices before trusting any estimate — Google Maps Platform pricing page for the first four, Anthropic pricing page for the token rates. Values below are 0 on purpose so a stale copy can't mislead you.",
+  "geocode_per_call": 0,
+  "sv_metadata_per_call": 0,
+  "street_view_image_per_call": 0,
+  "static_map_per_call": 0,
+  "vision_input_tokens_per_address": 6000,
+  "vision_output_tokens_per_address": 1500,
+  "claude_input_per_mtok": 0,
+  "claude_output_per_mtok": 0,
+  "batch_discount": 0.5
+}

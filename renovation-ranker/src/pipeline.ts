@@ -1,16 +1,20 @@
 /**
- * Phase 1 pipeline: rate-limited sequential scan of a list of addresses.
- * Per address: geocode -> Street View metadata -> images (street + satellite)
+ * Scan pipeline. Per address: geocode (skipped when the input already
+ * carries coordinates, e.g. from a parcel-dataset import) -> Street View
+ * metadata -> images (street + satellite) -> optional Solar API roof facts
  * -> single Claude Vision call -> deterministic scoring -> store.
  *
- * Cache rule: never re-analyze an address whose latest scan used the same
- * Street View capture date — imagery hasn't changed, so the answer hasn't.
+ * Runs through a bounded worker pool (Phase 2); Google calls share a
+ * minimum-interval rate limiter. Resume falls out of the cache rule: never
+ * re-analyze an address whose latest scan used the same Street View capture
+ * date — imagery hasn't changed, so the answer hasn't.
  */
 import type { Config } from "./config.ts";
-import type { GoogleClient } from "./google.ts";
+import type { GoogleClient, SolarInsights } from "./google.ts";
+import { runPool } from "./queue.ts";
 import { computeScores } from "./scoring.ts";
 import type { Store } from "./store.ts";
-import type { ScanRecord } from "./types.ts";
+import type { AddressInfo, ScanRecord } from "./types.ts";
 import type { VisionClient } from "./vision.ts";
 
 export interface PipelineDeps {
@@ -20,23 +24,42 @@ export interface PipelineDeps {
   store: Store;
 }
 
+/** A raw address string (needs geocoding) or an already-resolved record. */
+export type ScanTarget = string | AddressInfo;
+
 export type ScanOutcome =
   | { kind: "scored"; scan: ScanRecord }
   | { kind: "skipped_cached"; address: string }
   | { kind: "no_reliable_imagery"; scan: ScanRecord }
   | { kind: "error"; scan: ScanRecord };
 
+export function solarContext(solar: SolarInsights | null): string | undefined {
+  if (!solar || solar.roofSegmentCount === 0) return undefined;
+  const segs = solar.segments
+    .slice(0, 8)
+    .map((s) => `pitch ${s.pitchDegrees}°, facing ${s.azimuthDegrees}°, ${s.areaM2} m²`)
+    .join("; ");
+  return (
+    `Roof facts from Google Solar API (imagery ${solar.imageryDate ?? "date unknown"}): ` +
+    `${solar.roofSegmentCount} roof segments` +
+    (solar.roofAreaM2 ? `, total ~${solar.roofAreaM2} m²` : "") +
+    `. Segments: ${segs}. ` +
+    `Use these to distinguish original roof planes from add-ons and to interpret the satellite image.`
+  );
+}
+
 export async function scanAddress(
   deps: PipelineDeps,
-  rawAddress: string,
+  target: ScanTarget,
 ): Promise<ScanOutcome> {
   const { config, google, vision, store } = deps;
   const scanDate = new Date().toISOString();
 
-  const info = await google.geocode(rawAddress);
+  const info =
+    typeof target === "string" ? await google.geocode(target) : target;
   if (!info) {
     const scan: ScanRecord = {
-      address: rawAddress, lat: 0, lng: 0, zip: null, scanDate,
+      address: String(target), lat: 0, lng: 0, zip: null, scanDate,
       status: "error", panoId: null, imageryCaptureDate: null,
       model: null, report: null, scores: null, error: "geocoding failed",
     };
@@ -78,8 +101,17 @@ export async function scanAddress(
     return { kind: "no_reliable_imagery", scan };
   }
 
+  let context: string | undefined;
+  if (config.useSolar) {
+    try {
+      context = solarContext(await google.solarInsights(info.lat, info.lng));
+    } catch {
+      // solar is additive context only — never fail a scan over it
+    }
+  }
+
   try {
-    const report = await vision.analyze(info.address, images);
+    const report = await vision.analyze(info.address, images, context);
     const scores = computeScores(report, meta.captureDate, config.maxImageAgeMonths);
     const scan: ScanRecord = { ...base, status: "scored", report, scores };
     await store.saveScan(scan);
@@ -93,15 +125,26 @@ export async function scanAddress(
 
 export async function scanAddresses(
   deps: PipelineDeps,
-  addresses: string[],
+  targets: ScanTarget[],
   onProgress?: (done: number, total: number, outcome: ScanOutcome) => void,
 ): Promise<ScanOutcome[]> {
-  const outcomes: ScanOutcome[] = [];
-  for (let i = 0; i < addresses.length; i++) {
-    const outcome = await scanAddress(deps, addresses[i]);
-    outcomes.push(outcome);
-    onProgress?.(i + 1, addresses.length, outcome);
-    if (i < addresses.length - 1) await Bun.sleep(deps.config.scanDelayMs);
+  const { concurrency, scanDelayMs } = deps.config;
+  let done = 0;
+
+  if (concurrency <= 1) {
+    const outcomes: ScanOutcome[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const outcome = await scanAddress(deps, targets[i]);
+      outcomes.push(outcome);
+      onProgress?.(++done, targets.length, outcome);
+      if (i < targets.length - 1) await Bun.sleep(scanDelayMs);
+    }
+    return outcomes;
   }
-  return outcomes;
+
+  return runPool(targets, concurrency, async (target) => {
+    const outcome = await scanAddress(deps, target);
+    onProgress?.(++done, targets.length, outcome);
+    return outcome;
+  });
 }

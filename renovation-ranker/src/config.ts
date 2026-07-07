@@ -4,8 +4,14 @@ export interface Config {
   databaseUrl: string | null;
   /** JSON file store used when DATABASE_URL is unset */
   dataDir: string;
-  /** ms delay between addresses in a scan (Phase 1: sequential, rate-limited) */
+  /** ms delay between addresses when scanning sequentially (concurrency 1) */
   scanDelayMs: number;
+  /** parallel addresses in flight during a scan */
+  concurrency: number;
+  /** minimum ms between Google API calls across the whole pool */
+  googleMinIntervalMs: number;
+  /** SOLAR_API=1 adds Google Solar buildingInsights roof facts to the vision prompt */
+  useSolar: boolean;
   /** Imagery older than this many months lowers confidence and gets flagged */
   maxImageAgeMonths: number;
   /** MOCK=1 replaces Google + Anthropic clients with deterministic fixtures */
@@ -27,6 +33,9 @@ export function loadConfig(): Config {
     databaseUrl: process.env.DATABASE_URL ?? null,
     dataDir: process.env.DATA_DIR ?? `${import.meta.dir}/../data`,
     scanDelayMs: Number(process.env.SCAN_DELAY_MS ?? 1100),
+    concurrency: Number(process.env.CONCURRENCY ?? 1),
+    googleMinIntervalMs: Number(process.env.GOOGLE_MIN_INTERVAL_MS ?? 120),
+    useSolar: process.env.SOLAR_API === "1",
     maxImageAgeMonths: Number(process.env.MAX_IMAGE_AGE_MONTHS ?? 24),
     mock,
     serverPort: Number(process.env.PORT ?? 8787),

@@ -10,7 +10,11 @@ export interface LeadRow {
   rank: number;
   address: string;
   zip: string | null;
+  lat: number;
+  lng: number;
   score: number;
+  /** Change vs previous scan of the same address (null = first scan) */
+  delta: number | null;
   confidence: number;
   imageryDate: string | null;
   topFindings: string;
@@ -21,10 +25,34 @@ function relevantCategories(type: ContractorType): Category[] {
   return Object.keys(CONTRACTOR_WEIGHTS[type]) as Category[];
 }
 
+/** address -> score delta vs the previous scored scan, for one contractor type. */
+export function scoreDeltas(
+  allScans: ScanRecord[],
+  type: ContractorType,
+): Map<string, number> {
+  const byAddress = new Map<string, ScanRecord[]>();
+  for (const s of allScans) {
+    if (s.status !== "scored" || !s.scores) continue;
+    const list = byAddress.get(s.address) ?? [];
+    list.push(s);
+    byAddress.set(s.address, list);
+  }
+  const deltas = new Map<string, number>();
+  for (const [address, scans] of byAddress) {
+    if (scans.length < 2) continue;
+    scans.sort((a, b) => a.scanDate.localeCompare(b.scanDate));
+    const prev = scans[scans.length - 2].scores!.byContractor[type];
+    const latest = scans[scans.length - 1].scores!.byContractor[type];
+    deltas.set(address, Math.round((latest - prev) * 10) / 10);
+  }
+  return deltas;
+}
+
 export function leadsFor(
   scans: ScanRecord[],
   type: ContractorType,
   minScore = 0,
+  deltas?: Map<string, number>,
 ): LeadRow[] {
   const rows = scans
     .filter((s) => s.status === "scored" && s.scores && s.report)
@@ -40,7 +68,10 @@ export function leadsFor(
       return {
         address: s.address,
         zip: s.zip,
+        lat: s.lat,
+        lng: s.lng,
         score: s.scores!.byContractor[type],
+        delta: deltas?.get(s.address) ?? null,
         confidence: s.scores!.confidence,
         imageryDate: s.imageryCaptureDate,
         topFindings: findings.slice(0, 5).join("; "),
@@ -59,9 +90,10 @@ function csvEscape(v: string | number | null): string {
 }
 
 export function leadsToCsv(rows: LeadRow[]): string {
-  const header = "rank,address,zip,score,confidence,imagery_date,top_findings,notes";
+  const header =
+    "rank,address,zip,lat,lng,score,delta,confidence,imagery_date,top_findings,notes";
   const lines = rows.map((r) =>
-    [r.rank, r.address, r.zip, r.score, r.confidence, r.imageryDate, r.topFindings, r.notes]
+    [r.rank, r.address, r.zip, r.lat, r.lng, r.score, r.delta, r.confidence, r.imageryDate, r.topFindings, r.notes]
       .map(csvEscape)
       .join(","),
   );

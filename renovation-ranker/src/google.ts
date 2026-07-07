@@ -4,18 +4,32 @@
  * and zip-code address discovery. All fetches happen server-side — no
  * CORS proxy workarounds.
  */
+import { RateLimiter } from "./queue.ts";
 import type { AddressInfo, PropertyImage, StreetViewMeta } from "./types.ts";
 
 const GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const SV_META_URL = "https://maps.googleapis.com/maps/api/streetview/metadata";
 const SV_IMAGE_URL = "https://maps.googleapis.com/maps/api/streetview";
 const STATIC_MAP_URL = "https://maps.googleapis.com/maps/api/staticmap";
+const SOLAR_URL = "https://solar.googleapis.com/v1/buildingInsights:findClosest";
+
+/** Roof facts from the Solar API, passed to the vision model as text
+ * context (segment pitches/azimuths/areas help it reason about add-ons and
+ * complex rooflines). Imagery data layers are a later phase. */
+export interface SolarInsights {
+  roofSegmentCount: number;
+  roofAreaM2: number | null;
+  segments: { pitchDegrees: number; azimuthDegrees: number; areaM2: number }[];
+  imageryDate: string | null;
+}
 
 export interface GoogleClient {
   geocode(address: string): Promise<AddressInfo | null>;
   streetViewMetadata(lat: number, lng: number): Promise<StreetViewMeta>;
   fetchImages(info: AddressInfo, meta: StreetViewMeta): Promise<PropertyImage[]>;
   discoverAddresses(zip: string, limit: number): Promise<AddressInfo[]>;
+  /** null when the Solar API has no data for this location */
+  solarInsights(lat: number, lng: number): Promise<SolarInsights | null>;
 }
 
 async function fetchJsonWithRetry(url: string): Promise<any> {
@@ -167,5 +181,46 @@ export function createGoogleClient(apiKey: string): GoogleClient {
       }
       return found;
     },
+
+    async solarInsights(lat, lng) {
+      const url = `${SOLAR_URL}?location.latitude=${lat}&location.longitude=${lng}&requiredQuality=MEDIUM&key=${apiKey}`;
+      const res = await fetch(url);
+      if (res.status === 404) return null; // no solar coverage here
+      if (!res.ok) throw new Error(`Solar API ${res.status}`);
+      const data: any = await res.json();
+      const segments = (data.solarPotential?.roofSegmentStats ?? []).map((s: any) => ({
+        pitchDegrees: Math.round(s.pitchDegrees ?? 0),
+        azimuthDegrees: Math.round(s.azimuthDegrees ?? 0),
+        areaM2: Math.round(s.stats?.areaMeters2 ?? 0),
+      }));
+      const d = data.imageryDate;
+      return {
+        roofSegmentCount: segments.length,
+        roofAreaM2: data.solarPotential?.wholeRoofStats?.areaMeters2
+          ? Math.round(data.solarPotential.wholeRoofStats.areaMeters2)
+          : null,
+        segments,
+        imageryDate: d ? `${d.year}-${String(d.month).padStart(2, "0")}` : null,
+      };
+    },
+  };
+}
+
+/** Wrap a client so all its calls share one minimum-interval rate limiter —
+ * keeps Google QPS bounded when the scan pool runs concurrently. */
+export function withRateLimit(client: GoogleClient, minIntervalMs: number): GoogleClient {
+  const limiter = new RateLimiter(minIntervalMs);
+  const wrap =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      await limiter.acquire();
+      return fn(...args);
+    };
+  return {
+    geocode: wrap(client.geocode.bind(client)),
+    streetViewMetadata: wrap(client.streetViewMetadata.bind(client)),
+    fetchImages: wrap(client.fetchImages.bind(client)),
+    discoverAddresses: client.discoverAddresses.bind(client), // self-paced
+    solarInsights: wrap(client.solarInsights.bind(client)),
   };
 }

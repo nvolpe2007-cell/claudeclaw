@@ -1,4 +1,4 @@
-# Renovation Ranker (Phase 1 MVP)
+# Renovation Ranker (Phase 1 MVP + Phase 2 features)
 
 Scans residential addresses, pulls Street View + satellite imagery, sends each
 property through a single Claude Vision call with a structured condition
@@ -49,11 +49,16 @@ pipeline, scoring, dashboard, and CSV export run end-to-end with zero cost.
 | Command | What it does |
 |---|---|
 | `scan-address "<addr>"` | Scan one address |
-| `scan-list <file.json>` | Scan a JSON array of addresses (validation workflow) |
-| `scan-zip <zip> [--limit N]` | Discover addresses in a zip (reverse-geocode grid sampling) and scan them |
-| `results [--type T] [--min N]` | Print the ranked lead list |
+| `scan-list <file.json> [--concurrency N]` | Scan a JSON array of addresses — strings, or pre-geocoded `{address, lat, lng, zip}` objects from `import-addresses` |
+| `scan-zip <zip> [--limit N] [--concurrency N]` | Discover addresses in a zip (reverse-geocode grid sampling) and scan them |
+| `batch-submit <file.json>` | Fetch imagery now, submit all vision analyses as one Claude **Batch API** job (50% token cost; usually done within an hour) |
+| `batch-status <id>` / `batch-collect <id>` | Poll the batch / ingest results into the store |
+| `import-addresses <parcels.csv> [--zip Z] [--out f.json]` | Import an OpenAddresses/parcel CSV — full-coverage discovery; rows carry coordinates so scans skip the Geocoding API |
+| `validate <ground-truth.json>` | Compare model ranking to your own 0–3 ratings (see `ground-truth.example.json`): Spearman rank correlation per category + biggest disagreements with model evidence |
+| `estimate --addresses N [--pricing f] [--batch] [--pre-geocoded]` | Itemized cost projection from a pricing file **you** fill in with current prices (`pricing.example.json`) |
+| `results [--type T] [--min N]` | Print the ranked lead list (with Δ vs previous scan) |
 | `export [--type T] [--min N]` | CSV lead list to stdout, segmented by contractor type |
-| `serve` | Web dashboard: ranked table, contractor-type filter, CSV download |
+| `serve` | Web dashboard: ranked table (with re-scan Δ), map view at `/map` (score-colored pins), CSV download |
 
 Contractor types: `roofing`, `siding`, `windows`, `landscaping`, `general` —
 each weights the category scores differently, so a roofer's list ranks (and
@@ -97,8 +102,31 @@ as stains, etc.). Outputs are "worth a look" leads, **not** inspection
 reports — frame them that way to contractors, and put that line in the
 contract if lists are sold.
 
-## Phase 2+ (not in this MVP)
+## Phase 2 features included
 
-Queue (hundreds of addresses per zip needs async + retries), Google Solar API
-roof layers, Batch API for 50% vision cost reduction, map view, multi-zip
-scans, historical re-scan tracking, auth for contractor logins.
+- **Concurrent scanning** — `--concurrency N` runs a bounded worker pool;
+  all Google calls share a minimum-interval rate limiter
+  (`GOOGLE_MIN_INTERVAL_MS`). Crash/rerun resume falls out of the
+  capture-date cache.
+- **Batch API mode** — `batch-submit` fetches imagery immediately but runs
+  the vision analyses through the Claude Batch API at 50% token cost.
+- **Solar API context** — `SOLAR_API=1` adds Google Solar `buildingInsights`
+  roof facts (segment pitches/azimuths/areas, solar imagery date) as text
+  context to the vision prompt. Solar data-layer *imagery* is future work.
+- **Validation harness** — `validate` turns the tune-the-prompt loop into a
+  measured one (rank correlation + per-address disagreement report).
+- **Parcel import** — `import-addresses` replaces grid discovery with a real
+  address dataset and skips geocoding (rows carry coordinates).
+- **Re-scan trend tracking** — every scan is kept; the Δ column (table, CSV,
+  API) shows score change vs the previous scan of the same address — the
+  did-the-house-get-fixed signal.
+- **Cost estimator** — `estimate` projects a scan's cost from a pricing file
+  you populate with current prices (values ship as 0 so stale numbers can't
+  mislead).
+- **Map view** — `/map` renders score-colored pins (Leaflet/OSM, loaded in
+  the browser only).
+
+## Phase 3 (not built)
+
+Multi-zip batch orchestration, contractor client logins/auth, Solar data-layer
+imagery in the vision call.

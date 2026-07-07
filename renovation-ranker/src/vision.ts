@@ -7,7 +7,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { CATEGORIES, SUB_ITEMS, type PropertyImage, type VisionReport } from "./types.ts";
 
 export interface VisionClient {
-  analyze(address: string, images: PropertyImage[]): Promise<VisionReport>;
+  analyze(
+    address: string,
+    images: PropertyImage[],
+    extraContext?: string,
+  ): Promise<VisionReport>;
 }
 
 const subItemSchema = {
@@ -88,7 +92,11 @@ Rules:
 - Multiple street-level headings are provided; identify the target house (usually centered) and ignore neighboring properties.
 - These are "worth a look" leads, not certified inspections — precision matters more than recall.`;
 
-function userContent(address: string, images: PropertyImage[]): Anthropic.ContentBlockParam[] {
+function userContent(
+  address: string,
+  images: PropertyImage[],
+  extraContext?: string,
+): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
   for (const img of images) {
     const label =
@@ -101,6 +109,9 @@ function userContent(address: string, images: PropertyImage[]): Anthropic.Conten
       source: { type: "base64", media_type: img.mediaType, data: img.base64 },
     });
   }
+  if (extraContext) {
+    blocks.push({ type: "text", text: extraContext });
+  }
   blocks.push({
     type: "text",
     text: `Assess the exterior condition of the property at: ${address}. Fill in every sub-item.`,
@@ -108,27 +119,44 @@ function userContent(address: string, images: PropertyImage[]): Anthropic.Conten
   return blocks;
 }
 
+/** Request params for one address's analysis — shared by the synchronous
+ * client and the Batch API path (identical params, halved price). */
+export function buildVisionParams(
+  model: string,
+  address: string,
+  images: PropertyImage[],
+  extraContext?: string,
+): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model,
+    max_tokens: 16000,
+    thinking: { type: "adaptive" },
+    system: SYSTEM_PROMPT,
+    output_config: { format: { type: "json_schema", schema: VISION_SCHEMA } },
+    messages: [{ role: "user", content: userContent(address, images, extraContext) }],
+  };
+}
+
+export function parseVisionResponse(response: Anthropic.Message): VisionReport {
+  if (response.stop_reason === "refusal") {
+    throw new Error("vision request was refused by safety classifiers");
+  }
+  const text = response.content.find((b) => b.type === "text");
+  if (!text || text.type !== "text") {
+    throw new Error(`no text block in vision response (stop_reason=${response.stop_reason})`);
+  }
+  return JSON.parse(text.text) as VisionReport;
+}
+
 export function createVisionClient(model: string): VisionClient {
   const client = new Anthropic({ maxRetries: 4 });
   return {
-    async analyze(address, images) {
+    async analyze(address, images, extraContext) {
       if (images.length === 0) throw new Error("no images to analyze");
-      const response = await client.messages.create({
-        model,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: SYSTEM_PROMPT,
-        output_config: { format: { type: "json_schema", schema: VISION_SCHEMA } },
-        messages: [{ role: "user", content: userContent(address, images) }],
-      });
-      if (response.stop_reason === "refusal") {
-        throw new Error("vision request was refused by safety classifiers");
-      }
-      const text = response.content.find((b) => b.type === "text");
-      if (!text || text.type !== "text") {
-        throw new Error(`no text block in vision response (stop_reason=${response.stop_reason})`);
-      }
-      return JSON.parse(text.text) as VisionReport;
+      const response = await client.messages.create(
+        buildVisionParams(model, address, images, extraContext),
+      );
+      return parseVisionResponse(response);
     },
   };
 }

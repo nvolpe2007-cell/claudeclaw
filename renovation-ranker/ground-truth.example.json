@@ -1,0 +1,10 @@
+[
+  {
+    "address": "123 Example Ave, Sherman Oaks, CA 91423",
+    "expected": { "roof": 2, "windows": 0, "siding_paint": 1, "landscaping": 3 }
+  },
+  {
+    "address": "456 Sample St, Sherman Oaks, CA 91423",
+    "expected": { "roof": 0, "windows": 1, "siding_paint": 0, "gutters_fascia": 0, "driveway_hardscape": 2, "landscaping": 0 }
+  }
+]

@@ -13,6 +13,8 @@ export interface Store {
   latestScans(): Promise<ScanRecord[]>;
   /** Latest scan for one address, if any. */
   latestScanFor(address: string): Promise<ScanRecord | null>;
+  /** Every scan (all dates) — powers re-scan trend tracking. */
+  allScans(): Promise<ScanRecord[]>;
   close(): Promise<void>;
 }
 
@@ -26,6 +28,15 @@ function createJsonStore(dataDir: string): Store {
   mkdirSync(dataDir, { recursive: true });
   const file = `${dataDir}/scans.json`;
 
+  // The scan pool calls saveScan concurrently; read-modify-write on one file
+  // loses updates unless serialized. All file access goes through this chain.
+  let chain: Promise<unknown> = Promise.resolve();
+  function serialized<R>(fn: () => Promise<R>): Promise<R> {
+    const next = chain.then(fn, fn);
+    chain = next.catch(() => {});
+    return next;
+  }
+
   async function readAll(): Promise<ScanRecord[]> {
     const f = Bun.file(file);
     if (!(await f.exists())) return [];
@@ -34,12 +45,14 @@ function createJsonStore(dataDir: string): Store {
 
   return {
     async saveScan(scan) {
-      const all = await readAll();
-      all.push(scan);
-      await Bun.write(file, JSON.stringify(all, null, 2));
+      await serialized(async () => {
+        const all = await readAll();
+        all.push(scan);
+        await Bun.write(file, JSON.stringify(all, null, 2));
+      });
     },
     async latestScans() {
-      const all = await readAll();
+      const all = await serialized(readAll);
       const byAddress = new Map<string, ScanRecord>();
       for (const s of all) {
         const prev = byAddress.get(s.address);
@@ -48,12 +61,15 @@ function createJsonStore(dataDir: string): Store {
       return [...byAddress.values()].sort((a, b) => b.scanDate.localeCompare(a.scanDate));
     },
     async latestScanFor(address) {
-      const all = await readAll();
+      const all = await serialized(readAll);
       let latest: ScanRecord | null = null;
       for (const s of all) {
         if (s.address === address && (!latest || s.scanDate > latest.scanDate)) latest = s;
       }
       return latest;
+    },
+    async allScans() {
+      return serialized(readAll);
     },
     async close() {},
   };
@@ -161,6 +177,17 @@ function createPgStore(databaseUrl: string): Store {
         [address],
       );
       return res.rows[0] ? rowToScan(res.rows[0]) : null;
+    },
+
+    async allScans() {
+      await init();
+      const res = await pool.query(
+        `SELECT p.address, p.lat, p.lng, p.zip,
+                s.scan_date, s.status, s.pano_id, s.imagery_capture_date, s.model, s.report, s.scores, s.error
+         FROM properties p JOIN scans s ON s.property_id = p.id
+         ORDER BY s.scan_date ASC`,
+      );
+      return res.rows.map(rowToScan);
     },
 
     async close() {

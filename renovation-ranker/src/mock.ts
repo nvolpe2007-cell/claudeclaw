@@ -77,6 +77,20 @@ export function createMockGoogleClient(): GoogleClient {
         zip,
       }));
     },
+    async solarInsights(lat, lng) {
+      const h = hash(`solar:${lat},${lng}`);
+      const n = 2 + (h % 4);
+      return {
+        roofSegmentCount: n,
+        roofAreaM2: 120 + (h % 150),
+        segments: Array.from({ length: n }, (_, i) => ({
+          pitchDegrees: 15 + ((h >> i) % 20),
+          azimuthDegrees: (i * 90 + (h % 45)) % 360,
+          areaM2: 25 + ((h >> (i + 2)) % 40),
+        })),
+        imageryDate: "2025-08",
+      };
+    },
   };
 }
 
