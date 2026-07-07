@@ -1,8 +1,9 @@
 /**
  * Dashboard: ranked table (with re-scan score deltas) at /, map view with
  * score-colored pins at /map, JSON at /api/results, CSV at /export.csv.
- * The map page loads Leaflet + OSM tiles from public CDNs — it runs in the
- * operator's browser, not in the scan pipeline.
+ * Leaflet is vendored and served locally (/assets/*) so the map works
+ * behind restrictive proxies; only the OSM tile layer needs the internet,
+ * and pins render even when tiles can't load.
  */
 import { leadsFor, leadsToCsv, scoreDeltas, type LeadRow } from "./export.ts";
 import type { Store } from "./store.ts";
@@ -112,13 +113,13 @@ function renderMapPage(rows: LeadRow[], type: ContractorType, minScore: number):
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Renovation Ranker — map</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>${BASE_STYLE} #map { height: 75vh; border-radius: 8px; }</style></head><body>
+<link rel="stylesheet" href="/assets/leaflet.css">
+<style>${BASE_STYLE} #map { height: 75vh; border-radius: 8px; background: #333; }</style></head><body>
 <h1>Renovation Ranker — map</h1>
 ${controls(type, minScore, "map")}
 <div id="map"></div>
-<p class="muted">Pin color: green (low score) → red (high renovation opportunity). Click a pin for details.</p>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<p class="muted">Pin color: green (low score) → red (high renovation opportunity). Click a pin for details. Base map tiles need internet access; pins render regardless.</p>
+<script src="/assets/leaflet.js"></script>
 <script>
   const rows = ${data};
   const map = L.map("map");
@@ -173,6 +174,17 @@ export function startServer(store: Store, port: number) {
         const { rows } = await loadRows(store, type, minScore);
         return Response.json({ contractorType: type, rows });
       }
+      if (url.pathname === "/assets/leaflet.js" || url.pathname === "/assets/leaflet.css") {
+        const name = url.pathname.endsWith(".js") ? "leaflet.js" : "leaflet.css";
+        const file = Bun.file(`${import.meta.dir}/../node_modules/leaflet/dist/${name}`);
+        return new Response(file, {
+          headers: {
+            "content-type": name.endsWith(".js") ? "text/javascript" : "text/css",
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+      if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
       if (url.pathname === "/export.csv") {
         const { rows } = await loadRows(store, type, minScore);
         return new Response(leadsToCsv(rows), {
