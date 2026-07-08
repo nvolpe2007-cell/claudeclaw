@@ -126,6 +126,20 @@ contract if lists are sold.
 - **Map view** — `/map` renders score-colored pins (Leaflet/OSM, loaded in
   the browser only).
 
+## Chrome extension
+
+`extension/` is a Manifest V3 Chrome extension that talks to the local server:
+the toolbar popup shows your top ranked leads (contractor-type + min-score
+filters), and highlighting an address on any webpage → right-click → *"Scan
+with Renovation Ranker"* scans it immediately and shows the score as a
+notification.
+
+Install: start the server (`bun run serve`), open `chrome://extensions`,
+enable **Developer mode**, click **Load unpacked**, and select the
+`renovation-ranker/extension/` folder. The extension expects the server on
+`http://localhost:8787` (edit `BASE` in `popup.js`/`background.js` and
+`host_permissions` in `manifest.json` to change it).
+
 ## Phase 3 (not built)
 
 Multi-zip batch orchestration, contractor client logins/auth, Solar data-layer
