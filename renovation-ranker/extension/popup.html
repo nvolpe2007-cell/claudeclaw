@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: system-ui, sans-serif; width: 420px; margin: 0; padding: 12px; }
+  h1 { font-size: 1rem; margin: 0 0 8px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  select, input { font: inherit; }
+  input[type=number] { width: 4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+  th, td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: #777; font-size: .78rem; }
+  .err { color: #c0392b; font-size: .85rem; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<h1>Renovation Ranker — top leads</h1>
+<div class="row">
+  <select id="type">
+    <option>general</option><option>roofing</option><option>siding</option>
+    <option>windows</option><option>landscaping</option>
+  </select>
+  <label>min <input id="min" type="number" value="0" min="0" max="100" step="5"></label>
+  <a id="dash" href="#" target="_blank">Open dashboard</a>
+</div>
+<div id="status" class="muted">Loading…</div>
+<table id="tbl" hidden>
+  <thead><tr><th>#</th><th>Address</th><th>Score</th><th>Conf.</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p class="muted">Tip: highlight an address on any webpage, right-click → “Scan with Renovation Ranker”.</p>
+<script src="popup.js"></script>
+</body>
+</html>

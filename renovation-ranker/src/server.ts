@@ -6,6 +6,7 @@
  * and pins render even when tiles can't load.
  */
 import { leadsFor, leadsToCsv, scoreDeltas, type LeadRow } from "./export.ts";
+import { scanAddress, type PipelineDeps } from "./pipeline.ts";
 import type { Store } from "./store.ts";
 import { CONTRACTOR_TYPES, type ContractorType } from "./types.ts";
 
@@ -150,7 +151,8 @@ ${controls(type, minScore, "map")}
 </body></html>`;
 }
 
-export function startServer(store: Store, port: number) {
+export function startServer(deps: PipelineDeps, port: number) {
+  const { store } = deps;
   return Bun.serve({
     port,
     async fetch(req) {
@@ -170,9 +172,31 @@ export function startServer(store: Store, port: number) {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
       }
+      // /api/* is also consumed by the browser extension — allow cross-origin.
+      const cors = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-headers": "content-type",
+      };
+      if (url.pathname.startsWith("/api/") && req.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: cors });
+      }
       if (url.pathname === "/api/results") {
         const { rows } = await loadRows(store, type, minScore);
-        return Response.json({ contractorType: type, rows });
+        return Response.json({ contractorType: type, rows }, { headers: cors });
+      }
+      if (url.pathname === "/api/scan" && req.method === "POST") {
+        const body = (await req.json().catch(() => null)) as { address?: string } | null;
+        const address = body?.address?.trim();
+        if (!address || address.length > 200) {
+          return Response.json({ error: "body must be {address: string}" }, { status: 400, headers: cors });
+        }
+        const outcome = await scanAddress(deps, address);
+        if (outcome.kind === "skipped_cached") {
+          const scan = await store.latestScanFor(outcome.address);
+          return Response.json({ kind: "already_scored", scan }, { headers: cors });
+        }
+        return Response.json({ kind: outcome.kind, scan: outcome.scan }, { headers: cors });
       }
       if (url.pathname === "/assets/leaflet.js" || url.pathname === "/assets/leaflet.css") {
         const name = url.pathname.endsWith(".js") ? "leaflet.js" : "leaflet.css";

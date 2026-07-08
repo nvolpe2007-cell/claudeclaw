@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Renovation Ranker",
+  "version": "0.1.0",
+  "description": "See your ranked renovation leads and scan any address you highlight on a webpage. Requires the local Renovation Ranker server (bun run serve).",
+  "icons": { "128": "icon.png" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Renovation Ranker",
+    "default_icon": { "128": "icon.png" }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["contextMenus", "notifications", "storage"],
+  "host_permissions": ["http://localhost:8787/*"]
+}

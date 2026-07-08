@@ -269,7 +269,7 @@ async function main() {
 
     case "serve": {
       const deps = buildDeps();
-      const server = startServer(deps.store, deps.config.serverPort);
+      const server = startServer(deps, deps.config.serverPort);
       console.log(`Dashboard: http://localhost:${server.port} (map: /map)`);
       break;
     }
