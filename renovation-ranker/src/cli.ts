@@ -79,7 +79,10 @@ async function loadTargets(file: string): Promise<ScanTarget[]> {
     if (typeof entry === "string") return entry;
     const o = entry as AddressInfo;
     if (o && typeof o.address === "string" && typeof o.lat === "number" && typeof o.lng === "number") {
-      return { address: o.address, lat: o.lat, lng: o.lng, zip: o.zip ?? null };
+      return {
+        address: o.address, lat: o.lat, lng: o.lng, zip: o.zip ?? null,
+        ...(o.parcel ? { parcel: o.parcel } : {}),
+      };
     }
     throw new Error(`${file}: entries must be strings or {address, lat, lng, zip} objects`);
   });
@@ -248,7 +251,8 @@ async function main() {
             r.delta === null ? "" : `  Δ ${r.delta > 0 ? "+" : ""}${r.delta.toFixed(1)}`;
           console.log(
             `${String(r.rank).padStart(3)}. ${r.score.toFixed(1).padStart(5)}${delta}  conf ${r.confidence.toFixed(2)}  ${r.address}` +
-              (r.topFindings ? `\n       ${r.topFindings}` : ""),
+              (r.topFindings ? `\n       findings: ${r.topFindings}` : "") +
+              (r.suggestedWork ? `\n       work: ${r.suggestedWork}` : ""),
           );
         }
       }

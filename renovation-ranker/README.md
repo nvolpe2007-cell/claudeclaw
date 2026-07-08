@@ -126,6 +126,27 @@ contract if lists are sold.
 - **Map view** — `/map` renders score-colored pins (Leaflet/OSM, loaded in
   the browser only).
 
+## Teaching it (knowledge layers)
+
+Four places to make the system smarter, from cheapest to most structural:
+
+1. **`knowledge/inspection-notes.md`** — plain-markdown inspection know-how
+   injected into the vision prompt on every scan (what algae vs. moss looks
+   like, false-positive warnings, regional norms). Edit it freely; no code
+   changes. Override the path with `KNOWLEDGE_FILE`.
+2. **Work recommendations (`src/workplan.ts`)** — the deterministic
+   finding → trade/job/urgency mapping behind the "Suggested work" column and
+   the `suggested_work` CSV field. Tune job wording and urgency thresholds
+   there; it's code, so recommendations stay consistent and auditable.
+3. **Taxonomy (`src/types.ts`) + weights (`src/scoring.ts`)** — what it
+   checks and how much each defect matters.
+4. **Parcel context** — `import-addresses` also picks up assessor columns
+   (`YEAR_BUILT`, `SQFT`, `LAST_SALE*`) and feeds them to the model as priors
+   (a 60-year-old roof, likely single-pane originals, a recent flip).
+
+The `validate` command closes the loop: every disagreement report tells you
+which knowledge is missing from the prompt or which weight is off.
+
 ## Chrome extension
 
 `extension/` is a Manifest V3 Chrome extension that talks to the local server:

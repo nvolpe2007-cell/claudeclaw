@@ -23,6 +23,7 @@ export const SUB_ITEMS: Record<Category, readonly string[]> = {
     "sagging_ridgeline",
     "exposed_underlayment",
     "roof_section_age_mismatch",
+    "chimney_or_flashing_damage",
   ],
   windows: [
     "single_pane_appearance",
@@ -30,6 +31,7 @@ export const SUB_ITEMS: Record<Category, readonly string[]> = {
     "fogging_seal_failure",
     "mismatched_styles",
     "boarded_or_broken_panes",
+    "damaged_screens",
   ],
   siding_paint: [
     "peeling_chalking_paint",
@@ -37,6 +39,8 @@ export const SUB_ITEMS: Record<Category, readonly string[]> = {
     "warped_rotting_siding",
     "water_staining",
     "faded_color",
+    "visible_wood_rot_trim",
+    "garage_door_damage",
   ],
   gutters_fascia: [
     "sagging_gutters",
@@ -49,6 +53,7 @@ export const SUB_ITEMS: Record<Category, readonly string[]> = {
     "overgrowth",
     "dead_lawn",
     "dead_trees_shrubs_near_structure",
+    "fence_disrepair",
   ],
 };
 
@@ -95,11 +100,20 @@ export interface Scores {
   confidence: number;
 }
 
+export interface ParcelData {
+  yearBuilt?: number;
+  sqft?: number;
+  lastSaleYear?: number;
+}
+
 export interface AddressInfo {
   address: string;
   lat: number;
   lng: number;
   zip: string | null;
+  /** From county assessor / parcel imports — fed to the vision model as
+   * context (a 60-year-old never-replaced roof is a strong prior). */
+  parcel?: ParcelData;
 }
 
 export interface StreetViewMeta {

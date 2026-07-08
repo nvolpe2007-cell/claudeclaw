@@ -14,7 +14,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Config } from "./config.ts";
 import type { GoogleClient } from "./google.ts";
-import { scanAddresses, solarContext, type PipelineDeps, type ScanTarget } from "./pipeline.ts";
+import { parcelContext, scanAddresses, solarContext, type PipelineDeps, type ScanTarget } from "./pipeline.ts";
 import { computeScores } from "./scoring.ts";
 import type { Store } from "./store.ts";
 import type { AddressInfo, ScanRecord, StreetViewMeta } from "./types.ts";
@@ -97,18 +97,22 @@ export async function batchSubmit(
       continue;
     }
 
-    let context: string | undefined;
+    const contextParts: string[] = [];
+    const parcel = parcelContext(info);
+    if (parcel) contextParts.push(parcel);
     if (config.useSolar) {
       try {
-        context = solarContext(await google.solarInsights(info.lat, info.lng));
+        const solar = solarContext(await google.solarInsights(info.lat, info.lng));
+        if (solar) contextParts.push(solar);
       } catch {}
     }
+    const context = contextParts.length ? contextParts.join("\n\n") : undefined;
 
     const customId = `addr-${i}`;
     items.push({ customId, info, panoId: meta.panoId, captureDate: meta.captureDate });
     requests.push({
       custom_id: customId,
-      params: buildVisionParams(config.anthropicModel, info.address, images, context),
+      params: await buildVisionParams(config.anthropicModel, info.address, images, context),
     });
     log(`queued: ${info.address} (${images.length} images)`);
   }

@@ -33,6 +33,16 @@ export type ScanOutcome =
   | { kind: "no_reliable_imagery"; scan: ScanRecord }
   | { kind: "error"; scan: ScanRecord };
 
+export function parcelContext(info: AddressInfo, now: Date = new Date()): string | undefined {
+  const p = info.parcel;
+  if (!p || (!p.yearBuilt && !p.sqft && !p.lastSaleYear)) return undefined;
+  const parts: string[] = [];
+  if (p.yearBuilt) parts.push(`built ${p.yearBuilt} (${now.getFullYear() - p.yearBuilt} years old)`);
+  if (p.sqft) parts.push(`${p.sqft} sqft`);
+  if (p.lastSaleYear) parts.push(`last sold ${p.lastSaleYear}`);
+  return `County parcel data for this property: ${parts.join(", ")}. Use as prior context (roof/window age expectations), but trust the imagery over the prior.`;
+}
+
 export function solarContext(solar: SolarInsights | null): string | undefined {
   if (!solar || solar.roofSegmentCount === 0) return undefined;
   const segs = solar.segments
@@ -101,14 +111,18 @@ export async function scanAddress(
     return { kind: "no_reliable_imagery", scan };
   }
 
-  let context: string | undefined;
+  const contextParts: string[] = [];
+  const parcel = parcelContext(info);
+  if (parcel) contextParts.push(parcel);
   if (config.useSolar) {
     try {
-      context = solarContext(await google.solarInsights(info.lat, info.lng));
+      const solar = solarContext(await google.solarInsights(info.lat, info.lng));
+      if (solar) contextParts.push(solar);
     } catch {
       // solar is additive context only — never fail a scan over it
     }
   }
+  const context = contextParts.length ? contextParts.join("\n\n") : undefined;
 
   try {
     const report = await vision.analyze(info.address, images, context);

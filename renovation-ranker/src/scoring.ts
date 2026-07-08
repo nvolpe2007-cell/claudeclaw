@@ -22,12 +22,16 @@ const SUB_ITEM_WEIGHTS: Record<string, number> = {
   exposed_underlayment: 2.0,
   sagging_ridgeline: 2.0,
   missing_or_damaged_shingles: 1.5,
+  chimney_or_flashing_damage: 1.5,
   boarded_or_broken_panes: 1.5,
   frame_rot_or_damage: 1.3,
   warped_rotting_siding: 1.3,
+  visible_wood_rot_trim: 1.2,
   fascia_rot: 1.2,
   dead_trees_shrubs_near_structure: 1.5,
   heaving: 1.2,
+  damaged_screens: 0.5,
+  fence_disrepair: 0.8,
 };
 
 /** Category weights per contractor type — each type's list must sum to 1. */

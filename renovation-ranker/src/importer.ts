@@ -5,9 +5,11 @@
  * addresses skip the Geocoding API entirely during scans.
  *
  * Recognized headers (case-insensitive): LON/LONGITUDE, LAT/LATITUDE,
- * NUMBER, STREET, UNIT, CITY, REGION/STATE, POSTCODE/ZIP.
+ * NUMBER, STREET, UNIT, CITY, REGION/STATE, POSTCODE/ZIP — plus optional
+ * assessor columns YEAR_BUILT, SQFT, LAST_SALE, which become parcel context
+ * for the vision model (roof age priors, single-pane priors, flip signals).
  */
-import type { AddressInfo } from "./types.ts";
+import type { AddressInfo, ParcelData } from "./types.ts";
 
 function parseCsvLine(line: string): string[] {
   const out: string[] = [];
@@ -46,6 +48,9 @@ const HEADER_ALIASES: Record<string, string[]> = {
   city: ["city", "municipality", "place"],
   region: ["region", "state", "province"],
   postcode: ["postcode", "zip", "zipcode", "postal_code"],
+  year_built: ["year_built", "yearbuilt", "yr_built", "yr_blt", "effective_year"],
+  sqft: ["sqft", "building_sqft", "bldg_sqft", "building_area", "living_area"],
+  last_sale: ["last_sale", "last_sale_date", "sale_date", "last_sale_year", "sale_year"],
 };
 
 function headerIndex(headers: string[]): Record<string, number> {
@@ -113,7 +118,19 @@ export function parseAddressCsv(csv: string, zipFilter: string | null): ImportRe
       continue;
     }
     seen.add(key);
-    addresses.push({ address, lat, lng: lon, zip: postcode });
+
+    const parcel: ParcelData = {};
+    const yearBuilt = Number(get("year_built"));
+    if (yearBuilt >= 1600 && yearBuilt <= 2100) parcel.yearBuilt = yearBuilt;
+    const sqft = Number(get("sqft"));
+    if (sqft > 0) parcel.sqft = Math.round(sqft);
+    const saleYearMatch = /(\d{4})/.exec(get("last_sale"));
+    if (saleYearMatch) parcel.lastSaleYear = Number(saleYearMatch[1]);
+
+    addresses.push({
+      address, lat, lng: lon, zip: postcode,
+      ...(Object.keys(parcel).length ? { parcel } : {}),
+    });
   }
 
   return { addresses, totalRows: lines.length - 1, skipped };

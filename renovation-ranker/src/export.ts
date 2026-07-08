@@ -5,6 +5,7 @@
  */
 import { CONTRACTOR_WEIGHTS } from "./scoring.ts";
 import type { Category, ContractorType, ScanRecord } from "./types.ts";
+import { workSummary } from "./workplan.ts";
 
 export interface LeadRow {
   rank: number;
@@ -18,6 +19,8 @@ export interface LeadRow {
   confidence: number;
   imageryDate: string | null;
   topFindings: string;
+  /** Deterministic "what needs done" summary from workplan.ts */
+  suggestedWork: string;
   notes: string;
 }
 
@@ -75,6 +78,7 @@ export function leadsFor(
         confidence: s.scores!.confidence,
         imageryDate: s.imageryCaptureDate,
         topFindings: findings.slice(0, 5).join("; "),
+        suggestedWork: workSummary(s, relevantCategories(type)),
         notes: s.report!.overall_notes,
       };
     })
@@ -91,9 +95,9 @@ function csvEscape(v: string | number | null): string {
 
 export function leadsToCsv(rows: LeadRow[]): string {
   const header =
-    "rank,address,zip,lat,lng,score,delta,confidence,imagery_date,top_findings,notes";
+    "rank,address,zip,lat,lng,score,delta,confidence,imagery_date,top_findings,suggested_work,notes";
   const lines = rows.map((r) =>
-    [r.rank, r.address, r.zip, r.lat, r.lng, r.score, r.delta, r.confidence, r.imageryDate, r.topFindings, r.notes]
+    [r.rank, r.address, r.zip, r.lat, r.lng, r.score, r.delta, r.confidence, r.imageryDate, r.topFindings, r.suggestedWork, r.notes]
       .map(csvEscape)
       .join(","),
   );

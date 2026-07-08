@@ -92,6 +92,24 @@ Rules:
 - Multiple street-level headings are provided; identify the target house (usually centered) and ignore neighboring properties.
 - These are "worth a look" leads, not certified inspections — precision matters more than recall.`;
 
+/**
+ * Operator-editable domain knowledge appended to the system prompt —
+ * knowledge/inspection-notes.md (override with KNOWLEDGE_FILE). Loaded once
+ * per process so the prompt stays byte-stable across a scan (prompt caching).
+ */
+let knowledgeCache: Promise<string> | null = null;
+export function loadKnowledge(): Promise<string> {
+  knowledgeCache ??= (async () => {
+    const path =
+      process.env.KNOWLEDGE_FILE ?? `${import.meta.dir}/../knowledge/inspection-notes.md`;
+    const file = Bun.file(path);
+    if (!(await file.exists())) return "";
+    const text = (await file.text()).trim();
+    return text ? `\n\nDomain knowledge from the operator — apply it when scoring:\n\n${text}` : "";
+  })();
+  return knowledgeCache;
+}
+
 function userContent(
   address: string,
   images: PropertyImage[],
@@ -121,17 +139,17 @@ function userContent(
 
 /** Request params for one address's analysis — shared by the synchronous
  * client and the Batch API path (identical params, halved price). */
-export function buildVisionParams(
+export async function buildVisionParams(
   model: string,
   address: string,
   images: PropertyImage[],
   extraContext?: string,
-): Anthropic.MessageCreateParamsNonStreaming {
+): Promise<Anthropic.MessageCreateParamsNonStreaming> {
   return {
     model,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
-    system: SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT + (await loadKnowledge()),
     output_config: { format: { type: "json_schema", schema: VISION_SCHEMA } },
     messages: [{ role: "user", content: userContent(address, images, extraContext) }],
   };
@@ -154,7 +172,7 @@ export function createVisionClient(model: string): VisionClient {
     async analyze(address, images, extraContext) {
       if (images.length === 0) throw new Error("no images to analyze");
       const response = await client.messages.create(
-        buildVisionParams(model, address, images, extraContext),
+        await buildVisionParams(model, address, images, extraContext),
       );
       return parseVisionResponse(response);
     },

@@ -127,7 +127,11 @@ const BASE_STYLE = `
     border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
   .imagery { color: var(--ink-2); white-space: nowrap; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; max-width: 30rem; }
+  .work { font-size: .78rem; color: var(--ink-2); max-width: 20rem; }
+  .work .urgent { color: var(--sev3); font-weight: 600; }
+  .work li { margin: 0 0 3px 0; }
+  .work ul { margin: 0; padding-left: 1rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; max-width: 24rem; }
   .chip { font-size: .72rem; border-radius: 5px; padding: 2px 8px; white-space: nowrap; }
   .chip.s3 { color: var(--sev3); background: var(--sev3-bg); }
   .chip.s2 { color: var(--sev2); background: var(--sev2-bg); }
@@ -205,6 +209,16 @@ function statTiles(rows: LeadRow[], unscored: number): string {
   </div>`;
 }
 
+function workListHtml(summary: string): string {
+  if (!summary) return `<span class="delta na">—</span>`;
+  const items = summary.split(" · ").map((job) => {
+    const urgent = job.endsWith(" [URGENT]");
+    const label = esc(job.replace(" [URGENT]", ""));
+    return `<li>${label}${urgent ? ` <span class="urgent">URGENT</span>` : ""}</li>`;
+  });
+  return `<ul>${items.join("")}</ul>`;
+}
+
 function chipsFor(findings: string): string {
   if (!findings) return `<span class="chips"></span>`;
   const chips = findings.split("; ").map((f) => {
@@ -239,6 +253,7 @@ function renderTablePage(
         <td class="num conf">${r.confidence.toFixed(2)}${low}</td>
         <td class="imagery">${esc(r.imageryDate ?? "?")}</td>
         <td>${chipsFor(r.topFindings)}</td>
+        <td class="work">${workListHtml(r.suggestedWork)}</td>
         <td class="notes">${esc(r.notes)}</td>
       </tr>`;
     })
@@ -250,8 +265,8 @@ ${statTiles(rows, unscored)}
   <div class="card-head"><h2>Ranked leads — ${type}</h2><span class="sub">score 0–100, weighted for this contractor type · Δ vs previous scan</span></div>
   <div class="tbl-scroll">
   <table>
-    <thead><tr><th class="num">#</th><th>Address</th><th>Score</th><th class="num">Δ</th><th class="num">Conf.</th><th>Imagery</th><th>Findings (severity ≥ 2)</th><th>Notes</th></tr></thead>
-    <tbody>${tableRows || `<tr><td colspan="8"><div class="empty">No scored addresses yet — run a scan first:<br><code>bun run src/cli.ts scan-list addresses.example.json</code></div></td></tr>`}</tbody>
+    <thead><tr><th class="num">#</th><th>Address</th><th>Score</th><th class="num">Δ</th><th class="num">Conf.</th><th>Imagery</th><th>Findings (severity ≥ 2)</th><th>Suggested work</th><th>Notes</th></tr></thead>
+    <tbody>${tableRows || `<tr><td colspan="9"><div class="empty">No scored addresses yet — run a scan first:<br><code>bun run src/cli.ts scan-list addresses.example.json</code></div></td></tr>`}</tbody>
   </table>
   </div>
 </div>
