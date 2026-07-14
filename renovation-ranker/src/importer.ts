@@ -7,7 +7,10 @@
  * Recognized headers (case-insensitive): LON/LONGITUDE, LAT/LATITUDE,
  * NUMBER, STREET, UNIT, CITY, REGION/STATE, POSTCODE/ZIP — plus optional
  * assessor columns YEAR_BUILT, SQFT, LAST_SALE, which become parcel context
- * for the vision model (roof age priors, single-pane priors, flip signals).
+ * for the vision model (roof age priors, single-pane priors, flip signals);
+ * and OWNER_OCCUPIED (homestead/owner-occupied exemption flag) or
+ * OWNER_MAILING_ADDRESS (compared against the situs address when no explicit
+ * flag exists), which become an owner-occupied vs. absentee-owner signal.
  */
 import type { AddressInfo, ParcelData } from "./types.ts";
 
@@ -51,7 +54,31 @@ const HEADER_ALIASES: Record<string, string[]> = {
   year_built: ["year_built", "yearbuilt", "yr_built", "yr_blt", "effective_year"],
   sqft: ["sqft", "building_sqft", "bldg_sqft", "building_area", "living_area"],
   last_sale: ["last_sale", "last_sale_date", "sale_date", "last_sale_year", "sale_year"],
+  owner_occupied: [
+    "owner_occupied", "owneroccupied", "homestead_exempt", "homeowner_exemption",
+    "owner_occ", "hx_flag",
+  ],
+  owner_mailing_address: [
+    "owner_mailing_address", "mail_address", "mailing_address", "owner_address",
+  ],
 };
+
+const TRUTHY = new Set(["y", "yes", "true", "1", "owner occupied", "owner-occupied"]);
+const FALSY = new Set(["n", "no", "false", "0", "absentee", "non-owner-occupied"]);
+
+/** Parses a homestead/owner-occupied flag column into a boolean, or
+ * undefined when blank/unrecognized. */
+function parseOwnerOccupiedFlag(raw: string): boolean | undefined {
+  const v = raw.trim().toLowerCase();
+  if (!v) return undefined;
+  if (TRUTHY.has(v)) return true;
+  if (FALSY.has(v)) return false;
+  return undefined;
+}
+
+function normalizeAddressLine(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
 
 function headerIndex(headers: string[]): Record<string, number> {
   const lower = headers.map((h) => h.trim().toLowerCase());
@@ -126,6 +153,21 @@ export function parseAddressCsv(csv: string, zipFilter: string | null): ImportRe
     if (sqft > 0) parcel.sqft = Math.round(sqft);
     const saleYearMatch = /(\d{4})/.exec(get("last_sale"));
     if (saleYearMatch) parcel.lastSaleYear = Number(saleYearMatch[1]);
+
+    const ownerOccupiedFlag = parseOwnerOccupiedFlag(get("owner_occupied"));
+    const ownerMailingAddress = get("owner_mailing_address");
+    if (ownerOccupiedFlag !== undefined) {
+      parcel.ownerOccupied = ownerOccupiedFlag;
+      if (!ownerOccupiedFlag && ownerMailingAddress) {
+        parcel.ownerMailingAddress = ownerMailingAddress;
+      }
+    } else if (ownerMailingAddress) {
+      const situsLine = normalizeAddressLine(`${number} ${street}`);
+      const mailingNorm = normalizeAddressLine(ownerMailingAddress);
+      const matches = mailingNorm.startsWith(situsLine);
+      parcel.ownerOccupied = matches;
+      if (!matches) parcel.ownerMailingAddress = ownerMailingAddress;
+    }
 
     addresses.push({
       address, lat, lng: lon, zip: postcode,

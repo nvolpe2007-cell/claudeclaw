@@ -92,3 +92,51 @@ describe("parcel import + context", () => {
     expect(parcelContext(addresses[1])).toBeUndefined();
   });
 });
+
+describe("owner-occupancy signal", () => {
+  const csv = [
+    "LON,LAT,NUMBER,STREET,CITY,REGION,POSTCODE,OWNER_OCCUPIED,OWNER_MAILING_ADDRESS",
+    // explicit homestead flag, owner-occupied
+    "-118.44,34.15,4321,VENTURA BLVD,SHERMAN OAKS,CA,91423,Y,",
+    // explicit flag, absentee, with a mailing address
+    "-118.45,34.16,4325,VENTURA BLVD,SHERMAN OAKS,CA,91423,N,PO BOX 90 BEVERLY HILLS CA 90210",
+    // no flag column value; mailing address matches situs -> owner-occupied
+    "-118.46,34.17,4331,VENTURA BLVD,SHERMAN OAKS,CA,91423,,4331 VENTURA BLVD SHERMAN OAKS CA 91423",
+    // no flag; mailing address differs -> absentee
+    "-118.47,34.18,4341,VENTURA BLVD,SHERMAN OAKS,CA,91423,,999 MAIN ST OTHER CITY CA 90001",
+    // neither column populated
+    "-118.48,34.19,4351,VENTURA BLVD,SHERMAN OAKS,CA,91423,,",
+  ].join("\n");
+
+  test("explicit homestead flag wins over mailing address comparison", () => {
+    const { addresses } = parseAddressCsv(csv, "91423");
+    expect(addresses[0].parcel).toEqual({ ownerOccupied: true });
+    expect(addresses[1].parcel).toEqual({
+      ownerOccupied: false,
+      ownerMailingAddress: "PO BOX 90 BEVERLY HILLS CA 90210",
+    });
+  });
+
+  test("falls back to comparing owner mailing address against the situs address", () => {
+    const { addresses } = parseAddressCsv(csv, "91423");
+    expect(addresses[2].parcel).toEqual({ ownerOccupied: true });
+    expect(addresses[3].parcel).toEqual({
+      ownerOccupied: false,
+      ownerMailingAddress: "999 MAIN ST OTHER CITY CA 90001",
+    });
+  });
+
+  test("no signal at all leaves parcel undefined", () => {
+    const { addresses } = parseAddressCsv(csv, "91423");
+    expect(addresses[4].parcel).toBeUndefined();
+  });
+
+  test("parcelContext surfaces owner-occupied vs. absentee-owner", () => {
+    const { addresses } = parseAddressCsv(csv, "91423");
+    expect(parcelContext(addresses[0])).toContain("owner-occupied");
+    const absentee = parcelContext(addresses[1])!;
+    expect(absentee).toContain("non-owner-occupied");
+    expect(absentee).toContain("PO BOX 90 BEVERLY HILLS CA 90210");
+    expect(parcelContext(addresses[4])).toBeUndefined();
+  });
+});

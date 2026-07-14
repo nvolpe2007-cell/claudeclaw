@@ -104,6 +104,10 @@ export interface ParcelData {
   yearBuilt?: number;
   sqft?: number;
   lastSaleYear?: number;
+  /** true = owner lives at the property, false = absentee owner (rental/investment/vacation) */
+  ownerOccupied?: boolean;
+  /** Owner's mailing address, when known and non-owner-occupied — who to actually contact. */
+  ownerMailingAddress?: string;
 }
 
 export interface AddressInfo {
@@ -148,5 +152,7 @@ export interface ScanRecord {
   model: string | null;
   report: VisionReport | null;
   scores: Scores | null;
+  /** Carried over from AddressInfo at scan time so exports can surface it. */
+  parcel?: ParcelData;
   error?: string;
 }

@@ -35,11 +35,21 @@ export type ScanOutcome =
 
 export function parcelContext(info: AddressInfo, now: Date = new Date()): string | undefined {
   const p = info.parcel;
-  if (!p || (!p.yearBuilt && !p.sqft && !p.lastSaleYear)) return undefined;
+  if (!p || (!p.yearBuilt && !p.sqft && !p.lastSaleYear && p.ownerOccupied === undefined)) {
+    return undefined;
+  }
   const parts: string[] = [];
   if (p.yearBuilt) parts.push(`built ${p.yearBuilt} (${now.getFullYear() - p.yearBuilt} years old)`);
   if (p.sqft) parts.push(`${p.sqft} sqft`);
   if (p.lastSaleYear) parts.push(`last sold ${p.lastSaleYear}`);
+  if (p.ownerOccupied === true) parts.push("owner-occupied");
+  else if (p.ownerOccupied === false) {
+    parts.push(
+      `non-owner-occupied — likely a rental or investment property${
+        p.ownerMailingAddress ? `; owner's mailing address is ${p.ownerMailingAddress}` : ""
+      }`,
+    );
+  }
   return `County parcel data for this property: ${parts.join(", ")}. Use as prior context (roof/window age expectations), but trust the imagery over the prior.`;
 }
 
@@ -92,6 +102,7 @@ export async function scanAddress(
     address: info.address, lat: info.lat, lng: info.lng, zip: info.zip,
     scanDate, panoId: meta.panoId, imageryCaptureDate: meta.captureDate,
     model: config.anthropicModel,
+    ...(info.parcel ? { parcel: info.parcel } : {}),
   };
 
   let images;

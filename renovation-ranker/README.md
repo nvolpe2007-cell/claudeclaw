@@ -143,6 +143,16 @@ Four places to make the system smarter, from cheapest to most structural:
 4. **Parcel context** — `import-addresses` also picks up assessor columns
    (`YEAR_BUILT`, `SQFT`, `LAST_SALE*`) and feeds them to the model as priors
    (a 60-year-old roof, likely single-pane originals, a recent flip).
+5. **Owner-occupancy signal** — `import-addresses` also recognizes an
+   `OWNER_OCCUPIED` column (a homestead/owner-occupied exemption flag, if your
+   county assessor export has one) or an `OWNER_MAILING_ADDRESS` column
+   (compared against the property's own address when no explicit flag
+   exists — a mismatch means an absentee owner). Vision analysis can't tell
+   owner from renter from imagery; this is the only place that signal comes
+   from. It shows up as a chip in the dashboard, an `owner_occupied`/
+   `owner_mailing_address` pair in the CSV export, and text context in the
+   vision prompt — so a contractor's list also tells them who to actually
+   contact if the resident isn't the decision-maker.
 
 The `validate` command closes the loop: every disagreement report tells you
 which knowledge is missing from the prompt or which weight is off.

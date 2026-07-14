@@ -135,6 +135,8 @@ const BASE_STYLE = `
   .chip { font-size: .72rem; border-radius: 5px; padding: 2px 8px; white-space: nowrap; }
   .chip.s3 { color: var(--sev3); background: var(--sev3-bg); }
   .chip.s2 { color: var(--sev2); background: var(--sev2-bg); }
+  .chip.occ-owner { color: var(--ink-2); background: var(--grid); }
+  .chip.occ-absentee { color: var(--sev2); background: var(--sev2-bg); }
   .notes { color: var(--ink-2); font-size: .8rem; max-width: 24rem; }
 
   .empty { padding: 40px; text-align: center; color: var(--muted); }
@@ -219,6 +221,13 @@ function workListHtml(summary: string): string {
   return `<ul>${items.join("")}</ul>`;
 }
 
+function occupancyChip(ownerOccupied: boolean | null, ownerMailingAddress: string | null): string {
+  if (ownerOccupied === null) return "";
+  if (ownerOccupied) return `<span class="chip occ-owner">owner-occ</span>`;
+  const title = ownerMailingAddress ? ` title="Mail owner at: ${esc(ownerMailingAddress)}"` : "";
+  return `<span class="chip occ-absentee"${title}>absentee owner</span>`;
+}
+
 function chipsFor(findings: string): string {
   if (!findings) return `<span class="chips"></span>`;
   const chips = findings.split("; ").map((f) => {
@@ -244,7 +253,7 @@ function renderTablePage(
       const low = r.confidence < 0.6 ? `<span class="low-tag">low</span>` : "";
       return `<tr>
         <td class="num rank">${r.rank}</td>
-        <td class="addr">${esc(r.address)}${r.zip ? ` <span class="zip">${esc(r.zip)}</span>` : ""}</td>
+        <td class="addr">${esc(r.address)}${r.zip ? ` <span class="zip">${esc(r.zip)}</span>` : ""} ${occupancyChip(r.ownerOccupied, r.ownerMailingAddress)}</td>
         <td class="score-cell">
           <div class="score-val">${r.score.toFixed(1)}</div>
           <div class="score-track" title="score ${r.score.toFixed(1)} / 100"><div class="score-fill" style="width:${Math.min(100, r.score)}%"></div></div>

@@ -21,6 +21,10 @@ export interface LeadRow {
   topFindings: string;
   /** Deterministic "what needs done" summary from workplan.ts */
   suggestedWork: string;
+  /** From parcel data: null = unknown, true = owner lives there, false = absentee owner */
+  ownerOccupied: boolean | null;
+  /** Owner's mailing address, when non-owner-occupied — who to actually contact */
+  ownerMailingAddress: string | null;
   notes: string;
 }
 
@@ -79,6 +83,8 @@ export function leadsFor(
         imageryDate: s.imageryCaptureDate,
         topFindings: findings.slice(0, 5).join("; "),
         suggestedWork: workSummary(s, relevantCategories(type)),
+        ownerOccupied: s.parcel?.ownerOccupied ?? null,
+        ownerMailingAddress: s.parcel?.ownerMailingAddress ?? null,
         notes: s.report!.overall_notes,
       };
     })
@@ -95,9 +101,13 @@ function csvEscape(v: string | number | null): string {
 
 export function leadsToCsv(rows: LeadRow[]): string {
   const header =
-    "rank,address,zip,lat,lng,score,delta,confidence,imagery_date,top_findings,suggested_work,notes";
+    "rank,address,zip,lat,lng,score,delta,confidence,imagery_date,top_findings,suggested_work,owner_occupied,owner_mailing_address,notes";
+  const ownerOccupiedStr = (v: boolean | null) => (v === null ? "" : v ? "yes" : "no");
   const lines = rows.map((r) =>
-    [r.rank, r.address, r.zip, r.lat, r.lng, r.score, r.delta, r.confidence, r.imageryDate, r.topFindings, r.suggestedWork, r.notes]
+    [
+      r.rank, r.address, r.zip, r.lat, r.lng, r.score, r.delta, r.confidence, r.imageryDate,
+      r.topFindings, r.suggestedWork, ownerOccupiedStr(r.ownerOccupied), r.ownerMailingAddress, r.notes,
+    ]
       .map(csvEscape)
       .join(","),
   );
