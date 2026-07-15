@@ -2,3 +2,7 @@
 node_modules
 .codemachine
 AGENTS.md
+
+# Local lead call-log notes (private; contains business contact info)
+call-log.md
+leads-*.csv
