@@ -61,6 +61,32 @@ const DEFAULT_SETTINGS: Settings = {
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
   stt: { baseUrl: "", model: "" },
+  youtubeAutomation: {
+    enabled: false,
+    elevenlabs: {
+      apiKey: "",
+      voiceId: "21m00Tcm4TlvDq8ikWAM",
+      modelId: "eleven_multilingual_v2",
+      stability: 0.75,
+      similarityBoost: 0.75,
+    },
+    upload: {
+      clientId: "",
+      clientSecret: "",
+      refreshToken: "",
+      privacyStatus: "private",
+      categoryId: "22",
+    },
+    pipeline: {
+      outputDir: ".claude/claudeclaw/youtube",
+      maxDurationSeconds: 3600,
+      videoQuality: "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+      defaultTags: ["relaxing", "sleep", "ambient"],
+      muteOriginalAudio: false,
+      originalAudioVolume: 0.15,
+      contentType: "sleep",
+    },
+  },
 };
 
 export interface HeartbeatExcludeWindow {
@@ -113,6 +139,7 @@ export interface Settings {
   security: SecurityConfig;
   web: WebConfig;
   stt: SttConfig;
+  youtubeAutomation: YoutubeAutomationConfig;
 }
 
 export interface AgenticMode {
@@ -146,6 +173,53 @@ export interface SttConfig {
   baseUrl: string;
   /** Model name passed to the API (default: "Systran/faster-whisper-large-v3") */
   model: string;
+}
+
+export interface ElevenLabsConfig {
+  apiKey: string;
+  /** ElevenLabs voice ID. Default is "Rachel" — calm, soothing. */
+  voiceId: string;
+  /** ElevenLabs model, e.g. "eleven_multilingual_v2" or "eleven_turbo_v2_5". */
+  modelId: string;
+  /** Stability (0–1): higher = more consistent delivery. */
+  stability: number;
+  /** Similarity boost (0–1): closeness to voice clone. */
+  similarityBoost: number;
+}
+
+export interface YoutubeUploadConfig {
+  /** OAuth2 client ID from Google Cloud Console. */
+  clientId: string;
+  /** OAuth2 client secret from Google Cloud Console. */
+  clientSecret: string;
+  /** OAuth2 refresh token for the destination channel. */
+  refreshToken: string;
+  /** "public" | "unlisted" | "private" */
+  privacyStatus: string;
+  /** YouTube category ID (22 = People & Blogs, 10 = Music, 24 = Entertainment). */
+  categoryId: string;
+}
+
+export interface YoutubeAutomationConfig {
+  enabled: boolean;
+  elevenlabs: ElevenLabsConfig;
+  upload: YoutubeUploadConfig;
+  pipeline: {
+    /** Directory for downloaded and processed videos. */
+    outputDir: string;
+    /** Max video length in seconds to download (0 = no limit). */
+    maxDurationSeconds: number;
+    /** yt-dlp format selector. */
+    videoQuality: string;
+    /** Default tags on every uploaded video. */
+    defaultTags: string[];
+    /** When true, original audio is completely removed. */
+    muteOriginalAudio: boolean;
+    /** Volume of original audio mixed under the voiceover (0–1). */
+    originalAudioVolume: number;
+    /** "sleep" = calm ambient narration; "gaming" = light upbeat commentary. */
+    contentType: "sleep" | "gaming";
+  };
 }
 
 let cached: Settings | null = null;
@@ -273,6 +347,41 @@ function parseSettings(raw: Record<string, any>): Settings {
     stt: {
       baseUrl: typeof raw.stt?.baseUrl === "string" ? raw.stt.baseUrl.trim() : "",
       model: typeof raw.stt?.model === "string" ? raw.stt.model.trim() : "",
+    },
+    youtubeAutomation: parseYoutubeAutomationConfig(raw.youtubeAutomation),
+  };
+}
+
+function parseYoutubeAutomationConfig(raw: any): YoutubeAutomationConfig {
+  const d = DEFAULT_SETTINGS.youtubeAutomation;
+  if (!raw || typeof raw !== "object") return d;
+  const el = raw.elevenlabs ?? {};
+  const up = raw.upload ?? {};
+  const pl = raw.pipeline ?? {};
+  return {
+    enabled: raw.enabled ?? false,
+    elevenlabs: {
+      apiKey: typeof el.apiKey === "string" ? el.apiKey.trim() : "",
+      voiceId: typeof el.voiceId === "string" ? el.voiceId.trim() : d.elevenlabs.voiceId,
+      modelId: typeof el.modelId === "string" ? el.modelId.trim() : d.elevenlabs.modelId,
+      stability: typeof el.stability === "number" ? el.stability : d.elevenlabs.stability,
+      similarityBoost: typeof el.similarityBoost === "number" ? el.similarityBoost : d.elevenlabs.similarityBoost,
+    },
+    upload: {
+      clientId: typeof up.clientId === "string" ? up.clientId.trim() : "",
+      clientSecret: typeof up.clientSecret === "string" ? up.clientSecret.trim() : "",
+      refreshToken: typeof up.refreshToken === "string" ? up.refreshToken.trim() : "",
+      privacyStatus: typeof up.privacyStatus === "string" ? up.privacyStatus.trim() : d.upload.privacyStatus,
+      categoryId: typeof up.categoryId === "string" ? up.categoryId.trim() : d.upload.categoryId,
+    },
+    pipeline: {
+      outputDir: typeof pl.outputDir === "string" ? pl.outputDir.trim() : d.pipeline.outputDir,
+      maxDurationSeconds: typeof pl.maxDurationSeconds === "number" ? pl.maxDurationSeconds : d.pipeline.maxDurationSeconds,
+      videoQuality: typeof pl.videoQuality === "string" ? pl.videoQuality.trim() : d.pipeline.videoQuality,
+      defaultTags: Array.isArray(pl.defaultTags) ? pl.defaultTags.filter((t: unknown) => typeof t === "string") : d.pipeline.defaultTags,
+      muteOriginalAudio: pl.muteOriginalAudio ?? d.pipeline.muteOriginalAudio,
+      originalAudioVolume: typeof pl.originalAudioVolume === "number" ? pl.originalAudioVolume : d.pipeline.originalAudioVolume,
+      contentType: pl.contentType === "gaming" ? "gaming" : "sleep",
     },
   };
 }
