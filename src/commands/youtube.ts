@@ -115,14 +115,6 @@ export async function youtube(args: string[]) {
   }
 
   if (subcommand === "ideas") {
-    if (!config.anthropicApiKey) {
-      console.error(
-        "Anthropic API key not configured.\n" +
-        "Set youtubeAutomation.anthropicApiKey in .claude/claudeclaw/settings.json"
-      );
-      process.exit(1);
-    }
-
     const flags = parseFlags(args.slice(1));
     const count = flags.count ? parseInt(flags.count, 10) : 3;
     const geo = flags.geo ?? "US";
