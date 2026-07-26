@@ -63,6 +63,7 @@ const DEFAULT_SETTINGS: Settings = {
   stt: { baseUrl: "", model: "" },
   youtubeAutomation: {
     enabled: false,
+    anthropicApiKey: "",
     elevenlabs: {
       apiKey: "",
       voiceId: "21m00Tcm4TlvDq8ikWAM",
@@ -202,6 +203,8 @@ export interface YoutubeUploadConfig {
 
 export interface YoutubeAutomationConfig {
   enabled: boolean;
+  /** Anthropic API key used by the viral idea generator. */
+  anthropicApiKey: string;
   elevenlabs: ElevenLabsConfig;
   upload: YoutubeUploadConfig;
   pipeline: {
@@ -360,6 +363,7 @@ function parseYoutubeAutomationConfig(raw: any): YoutubeAutomationConfig {
   const pl = raw.pipeline ?? {};
   return {
     enabled: raw.enabled ?? false,
+    anthropicApiKey: typeof raw.anthropicApiKey === "string" ? raw.anthropicApiKey.trim() : "",
     elevenlabs: {
       apiKey: typeof el.apiKey === "string" ? el.apiKey.trim() : "",
       voiceId: typeof el.voiceId === "string" ? el.voiceId.trim() : d.elevenlabs.voiceId,

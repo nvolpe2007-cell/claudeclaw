@@ -2,16 +2,23 @@ import { initConfig, loadSettings } from "../config";
 import { runPipeline } from "../youtube/pipeline";
 import { listVoices } from "../youtube/elevenlabs";
 import { searchVideos } from "../youtube/downloader";
+import { fetchAllTrends } from "../youtube/trends";
+import { generateViralIdeas } from "../youtube/ideator";
 
 function printHelp() {
   console.log(`
 Usage: claudeclaw youtube <subcommand> [options]
 
 Subcommands:
+  ideas          Fetch live trends and generate viral video ideas with Claude
   run            Download a video, generate ElevenLabs voiceover, mix, and upload
   search <query> Search YouTube and list matching videos
   voices         List available ElevenLabs voices
   help           Show this help
+
+Options for 'ideas':
+  --count <n>      Number of ideas to generate (default: 3)
+  --geo <code>     Country code for trends, e.g. US, GB, AU (default: US)
 
 Options for 'run':
   --url <url>      Use a specific YouTube video URL instead of auto-search
@@ -104,6 +111,65 @@ export async function youtube(args: string[]) {
       console.log(`        by ${v.channelTitle}`);
       console.log(`        ${v.url}\n`);
     }
+    return;
+  }
+
+  if (subcommand === "ideas") {
+    if (!config.anthropicApiKey) {
+      console.error(
+        "Anthropic API key not configured.\n" +
+        "Set youtubeAutomation.anthropicApiKey in .claude/claudeclaw/settings.json"
+      );
+      process.exit(1);
+    }
+
+    const flags = parseFlags(args.slice(1));
+    const count = flags.count ? parseInt(flags.count, 10) : 3;
+    const geo = flags.geo ?? "US";
+
+    console.log(`\nFetching live trending topics (${geo})…`);
+    const trends = await fetchAllTrends(config.upload.clientId ? config.upload.clientId : "", geo);
+
+    const googleCount = trends.google.length;
+    const youtubeCount = trends.youtube.length;
+    console.log(`  Google Trends: ${googleCount} topics`);
+    console.log(`  YouTube Trending: ${youtubeCount} videos`);
+
+    if (googleCount === 0 && youtubeCount === 0) {
+      console.error("Could not fetch any trends. Check your internet connection.");
+      process.exit(1);
+    }
+
+    console.log(`\nAsking Claude to generate ${count} viral video idea(s)…\n`);
+    const result = await generateViralIdeas(
+      config.anthropicApiKey,
+      trends,
+      config.pipeline.contentType,
+      count
+    );
+
+    console.log("─".repeat(65));
+    console.log(`TRENDS USED: ${result.trendsUsed.join(" · ")}`);
+    console.log("─".repeat(65));
+
+    for (let i = 0; i < result.ideas.length; i++) {
+      const idea = result.ideas[i];
+      const star = i === 0 ? " ★ TOP PICK" : "";
+      console.log(`\n[${i + 1}]${star}  Viral Score: ${idea.estimatedViralScore}/10`);
+      console.log(`TITLE:    ${idea.title}`);
+      console.log(`HOOK:     ${idea.hook}`);
+      console.log(`CONCEPT:  ${idea.concept}`);
+      console.log(`TRENDS:   ${(idea.trendsCombined ?? []).join(", ")}`);
+      console.log(`TAGS:     ${(idea.tags ?? []).slice(0, 8).join(", ")}`);
+      console.log(`\nVIDEO PROMPT:\n  ${idea.videoPrompt}`);
+      console.log(`\nSCRIPT PREVIEW:\n  ${idea.narrationScript.slice(0, 200)}…`);
+      console.log("─".repeat(65));
+    }
+
+    console.log(`\nTo run the top pick through the full pipeline:`);
+    console.log(
+      `  bun run src/index.ts youtube run --script "${result.topPick.narrationScript.slice(0, 60).replace(/"/g, "'")}…" --title "${result.topPick.title}"`
+    );
     return;
   }
 
