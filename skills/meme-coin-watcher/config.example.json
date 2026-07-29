@@ -1,0 +1,69 @@
+{
+  "chain": "solana",
+
+  "_watchlist_note": "Curated seed list of Solana meme-coin KOLs. These are public X accounts commonly followed by meme traders — VERIFY and CURATE for yourself, handles change and accounts get compromised. Add the callers you actually trust; remove any you don't. `weight` is advisory (1 = normal, 2 = high-signal).",
+  "watchlist": [
+    { "handle": "blknoiz06", "weight": 2, "note": "Ansem" },
+    { "handle": "theunipcs", "weight": 2, "note": "Bonk guy" },
+    { "handle": "notthreadguy", "weight": 1 },
+    { "handle": "Cupseyy", "weight": 2 },
+    { "handle": "0xngmi", "weight": 1, "note": "DefiLlama" },
+    { "handle": "CryptoKaleo", "weight": 1, "note": "Kaleo" },
+    { "handle": "973Meech", "weight": 1 },
+    { "handle": "iamkadense", "weight": 1 },
+    { "handle": "gorillacapsol", "weight": 1 },
+    { "handle": "orangie", "weight": 1 },
+    { "handle": "Danny_Crypton", "weight": 1 },
+    { "handle": "MacnBTC", "weight": 1 },
+    { "handle": "himgajria", "weight": 1 },
+    { "handle": "Zssbecker", "weight": 1 },
+    { "handle": "mrpunkdoteth", "weight": 1 }
+  ],
+
+  "broadSearch": {
+    "_note": "Optional discovery beyond the watchlist for the aggressive tier. Off by default: noisier and uses more API reads. When on, only tweets from accounts above minFollowers count.",
+    "enabled": false,
+    "minFollowers": 8000,
+    "query": "\"pump.fun/coin\""
+  },
+
+  "poll": {
+    "windowMinutes": 30,
+    "handlesPerQuery": 10,
+    "maxTokensEnriched": 25
+  },
+
+  "filters": {
+    "maxAgeHours": 72,
+    "minLiquidityUsd": 5000,
+
+    "aggressive": {
+      "_note": "Earliest social signal, minimal on-chain gate. More alerts, more noise/rugs.",
+      "enabled": true,
+      "minDistinctAccounts": 1,
+      "minLiquidityUsd": 3000
+    },
+
+    "confirmed": {
+      "_note": "Balanced: multiple credible callers AND on-chain safety. Fewer, higher-quality alerts.",
+      "enabled": true,
+      "minDistinctAccounts": 2,
+      "minLiquidityUsd": 15000,
+      "minLiqMcapRatio": 0.02,
+      "maxTop10HolderPct": 40,
+      "requireMintRevoked": true,
+      "requireLpLockedOrBurned": true,
+      "minVolume24hUsd": 20000,
+      "minBuySellRatio": 0.8
+    }
+  },
+
+  "telegram": {
+    "_note": "Dedicated bot for meme-coin alerts. PREFER the env vars MEMECOIN_TELEGRAM_BOT_TOKEN / MEMECOIN_TELEGRAM_CHAT_ID over putting secrets here. If both env vars are set they win. Leave blank to only print to stdout.",
+    "botToken": "",
+    "chatId": ""
+  },
+
+  "realertCooldownMinutes": 720,
+  "stateTtlHours": 72
+}
