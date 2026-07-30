@@ -1,0 +1,8 @@
+/node_modules
+/.next
+/out
+next-env.d.ts
+*.tsbuildinfo
+
+# Prototype feed data (base64 photos) — don't commit user content
+/data/posts.json
