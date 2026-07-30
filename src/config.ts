@@ -56,7 +56,11 @@ const DEFAULT_SETTINGS: Settings = {
     excludeWindows: [],
     forwardToTelegram: true,
   },
-  telegram: { token: "", allowedUserIds: [] },
+  telegram: {
+    token: "",
+    allowedUserIds: [],
+    channelWatch: { enabled: false, channels: [], notifyChatId: 0, mode: "summarize" },
+  },
   discord: { token: "", allowedUserIds: [], listenChannels: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
@@ -77,9 +81,31 @@ export interface HeartbeatConfig {
   forwardToTelegram: boolean;
 }
 
+export interface TelegramChannelWatchConfig {
+  /** Master switch for the channel watcher. */
+  enabled: boolean;
+  /**
+   * Channels to watch. Each entry is a channel id ("-100...") or a username
+   * ("@mychannel" / "mychannel"). Empty means watch every channel the bot is
+   * an administrator of.
+   */
+  channels: string[];
+  /**
+   * Chat id that receives the watcher's output. When 0, the first entry in
+   * allowedUserIds is used instead.
+   */
+  notifyChatId: number;
+  /**
+   * "forward" relays the raw post text; "summarize" runs the post through
+   * Claude (in an isolated per-channel session) and relays the summary.
+   */
+  mode: "forward" | "summarize";
+}
+
 export interface TelegramConfig {
   token: string;
   allowedUserIds: number[];
+  channelWatch: TelegramChannelWatchConfig;
 }
 
 export interface DiscordConfig {
@@ -217,6 +243,26 @@ function parseAgenticConfig(raw: any): AgenticConfig {
   };
 }
 
+function parseChannelWatch(raw: any): TelegramChannelWatchConfig {
+  const defaults = DEFAULT_SETTINGS.telegram.channelWatch;
+  if (!raw || typeof raw !== "object") {
+    return { ...defaults, channels: [...defaults.channels] };
+  }
+  const channels = Array.isArray(raw.channels)
+    ? raw.channels
+        .map((c: unknown) => String(c).trim())
+        .filter((c: string) => c.length > 0)
+    : [];
+  const mode: "forward" | "summarize" = raw.mode === "forward" ? "forward" : "summarize";
+  const notifyChatId = Number.isFinite(raw.notifyChatId) ? Number(raw.notifyChatId) : 0;
+  return {
+    enabled: raw.enabled ?? false,
+    channels,
+    notifyChatId,
+    mode,
+  };
+}
+
 function parseSettings(raw: Record<string, any>): Settings {
   const rawLevel = raw.security?.level;
   const level: SecurityLevel =
@@ -246,6 +292,7 @@ function parseSettings(raw: Record<string, any>): Settings {
     telegram: {
       token: raw.telegram?.token ?? "",
       allowedUserIds: raw.telegram?.allowedUserIds ?? [],
+      channelWatch: parseChannelWatch(raw.telegram?.channelWatch),
     },
     discord: {
       token: typeof raw.discord?.token === "string" ? raw.discord.token.trim() : "",

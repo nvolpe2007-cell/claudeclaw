@@ -76,6 +76,7 @@ The setup wizard walks you through model, heartbeat, Telegram, Discord, and secu
 
 ### Communication
 - **Telegram:** Text, image, and voice support.
+- **Telegram Channel Watch:** Add the bot as an admin to any channel and it monitors new posts — forwarding them to you verbatim or summarizing each post through Claude in an isolated session.
 - **Discord:** DMs, server mentions/replies, slash commands, voice messages, and image attachments.
 - **Time Awareness:** Message time prefixes help the agent understand delays and daily patterns.
 
@@ -87,6 +88,37 @@ The setup wizard walks you through model, heartbeat, Telegram, Discord, and secu
 - **Backward Compatible:** DMs and main channel messages continue using the global session.
 
 See [docs/MULTI_SESSION.md](docs/MULTI_SESSION.md) for technical details.
+
+### Telegram Channel Watch
+Point ClaudeClaw at a Telegram channel and it keeps an eye on every new post.
+
+- **Admin-based:** Add your bot to the channel as an administrator — Telegram only delivers channel posts to admin bots.
+- **Two modes:** `forward` relays the raw post text to you; `summarize` runs each post through Claude and sends back a concise summary with anything worth your attention flagged.
+- **Isolated sessions:** In `summarize` mode each channel gets its own Claude session (thread `channel:<id>`), so channel noise never leaks into your DMs or groups.
+- **Scoped or open:** Watch specific channels by id/username, or leave the list empty to watch every channel the bot administers.
+
+Configure it under `telegram.channelWatch` in `.claude/claudeclaw/settings.json`:
+
+```json
+{
+  "telegram": {
+    "token": "<bot-token>",
+    "allowedUserIds": [123456789],
+    "channelWatch": {
+      "enabled": true,
+      "channels": ["@my_channel", "-1001234567890"],
+      "notifyChatId": 0,
+      "mode": "summarize"
+    }
+  }
+}
+```
+
+- `channels` — channel usernames (`@name` or `name`) or numeric ids; empty `[]` watches all admin channels.
+- `notifyChatId` — chat that receives the output; `0` falls back to the first entry in `allowedUserIds`.
+- `mode` — `"summarize"` (default) or `"forward"`.
+
+See [docs/TELEGRAM_CHANNEL_WATCH.md](docs/TELEGRAM_CHANNEL_WATCH.md) for setup steps and architecture.
 
 ### Reliability and Control
 - **GLM Fallback:** Automatically continue with GLM models if your primary limit is reached.
