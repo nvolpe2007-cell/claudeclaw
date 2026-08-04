@@ -7,7 +7,8 @@ The web half of the social-norm challenge app. It closes the loop:
 2. **Do it**, then **post your video** — a short proof clip + caption, tagged
    with the task.
 3. **Watch the reel** — a vertical, snap-scrolling video feed of everyone's
-   completed nudges (autoplay muted; tap a clip for sound).
+   completed nudges (autoplay muted; tap a clip for sound). **Like** clips
+   and leave **comments** from the reel.
 
 Built with **Next.js (App Router) + TypeScript**, no CSS framework, and a
 zero-config **file-based store** so it runs with no external accounts.
@@ -34,7 +35,11 @@ app/
 ├── feed/page.tsx + reel.tsx   # the vertical video reel (reads the store)
 └── api/
     ├── task/random/route.ts   # GET  → { task, category }  (?category= filter)
-    └── posts/route.ts         # GET  → Post[]     POST → create a post
+    └── posts/
+        ├── route.ts           # GET  → Post[]     POST → create a post
+        └── [id]/
+            ├── like/          # POST → { likes }  (op: like | unlike)
+            └── comments/      # POST → Comment    (add a comment)
 lib/
 ├── tasks.ts                   # categorized nudge list (mirrors Tasks.swift)
 └── store.ts                   # file-based Post store (the Supabase seam)
@@ -45,7 +50,8 @@ lib/
 - **Storage** is a JSON file at `data/posts.json`; videos are inlined as
   base64 data URLs (capped ~30MB/clip). Fine for a few short clips locally,
   not for production or many users — phase 3 moves videos to object storage.
-- **No auth** — username is just a text field.
+- **No auth** — username is just a text field; a browser's "liked" state is
+  kept in `localStorage`, so likes aren't tied to real accounts yet.
 - Feed content isn't moderated yet.
 
 ## Phase 3 — make it real
