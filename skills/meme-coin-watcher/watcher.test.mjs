@@ -14,6 +14,7 @@ import {
   telegramConfig,
   discordConfig,
   holderMomentum,
+  alertHistoryRecord,
 } from "./watcher.mjs";
 
 let passed = 0;
@@ -207,6 +208,21 @@ const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
   // No Birdeye data (no key) => momentum never blocks; still confirmed
   const noKey = evaluate({ ...base, momentum: { holders: null, growthPct24h: null, selfGrowthPerHour: null } }, CFG);
   assert(noKey.tier === "confirmed", "absent momentum data does not block confirmed");
+}
+
+// --- alertHistoryRecord: entry snapshot for backtesting --------------------
+{
+  const token = {
+    key: BONK, cashtag: "SNAP", accounts: new Set(["ansem", "unipcs"]), mentions: 3,
+    dex: { address: BONK, symbol: "SNAP", priceUsd: 0.0025, marketCap: 500000, liquidityUsd: 40000, volume24hUsd: 90000, ageSec: 3600 },
+    momentum: { holders: 420 },
+  };
+  const rec = alertHistoryRecord({ token, evalResult: { tier: "confirmed", score: 77, reasons: ["r"] }, upgraded: false });
+  assert(rec.address === BONK && rec.symbol === "SNAP", "history record captures identity");
+  assert(rec.entryPriceUsd === 0.0025 && rec.entryMarketCap === 500000, "history record snapshots entry price + mcap");
+  assert(rec.tier === "confirmed" && rec.score === 77, "history record captures tier + score");
+  assert(rec.holders === 420 && Array.isArray(rec.accounts) && rec.accounts.length === 2, "history record captures holders + callers");
+  assert(typeof rec.ts === "number" && typeof rec.isoTime === "string", "history record is timestamped");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

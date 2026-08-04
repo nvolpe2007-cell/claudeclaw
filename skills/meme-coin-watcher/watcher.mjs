@@ -36,7 +36,7 @@
 // so the scheduler does not treat routine states as errors. Non-zero only on a
 // hard crash.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, appendFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -224,6 +224,39 @@ function withDefaults(c) {
     // Drop tokens from state after this many hours of no mentions.
     stateTtlHours: c.stateTtlHours ?? 72,
   };
+}
+
+const HISTORY_PATH = join(DEFAULT_STATE_DIR, "alerts.jsonl");
+
+/** Flatten a fired alert into an append-only history record (entry snapshot). */
+function alertHistoryRecord(a) {
+  const d = a.token.dex || {};
+  return {
+    ts: nowSec(),
+    isoTime: new Date().toISOString(),
+    tier: a.evalResult.tier,
+    upgraded: !!a.upgraded,
+    score: a.evalResult.score,
+    address: d.address || a.token.key || null,
+    symbol: a.token.cashtag || d.symbol || null,
+    entryPriceUsd: d.priceUsd ?? null,
+    entryMarketCap: d.marketCap ?? null,
+    entryLiquidityUsd: d.liquidityUsd ?? null,
+    entryVolume24hUsd: d.volume24hUsd ?? null,
+    ageSecAtAlert: d.ageSec ?? null,
+    holders: a.token.momentum?.holders ?? null,
+    accounts: [...a.token.accounts],
+    mentions: a.token.mentions,
+    reasons: a.evalResult.reasons,
+  };
+}
+
+/** Append fired alerts to the JSONL history log (one record per line). */
+async function appendAlertHistory(path, alerts) {
+  if (!alerts.length) return;
+  const lines = alerts.map((a) => JSON.stringify(alertHistoryRecord(a))).join("\n") + "\n";
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, lines, "utf8");
 }
 
 async function loadState(dir) {
@@ -777,7 +810,10 @@ async function runScan(args, cfg, state, statePath) {
     if ((v.lastSeenSec || v.lastAlertSec || 0) < cutoff) delete state.tokens[k];
   }
 
-  if (!args.dryRun) await saveState(statePath, state);
+  if (!args.dryRun) {
+    await saveState(statePath, state);
+    await appendAlertHistory(HISTORY_PATH, alerts); // record entry snapshots for backtesting
+  }
 
   // 7) Output ---------------------------------------------------------------
   // Confirmed first, then heads-up; each by score desc.
@@ -889,6 +925,8 @@ export {
   telegramConfig,
   discordConfig,
   holderMomentum,
+  alertHistoryRecord,
+  dexByAddress,
 };
 
 // Only run the watcher when executed directly (not when imported by a test).

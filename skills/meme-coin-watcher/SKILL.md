@@ -122,8 +122,28 @@ in `.claude/claudeclaw/meme-coin-watcher/config.json`:
   `minLiquidityUsd`/`minLiqMcapRatio`/`minVolume24hUsd`/`minHolders`/
   `minHolderGrowthPct24h`, lower `maxTop10HolderPct`.
 
+## Alert history & backtesting
+
+Every fired alert is appended to
+`.claude/claudeclaw/meme-coin-watcher/alerts.jsonl` with an entry-price snapshot.
+`backtest.mjs` replays that log — re-prices each token via DexScreener and reports
+win rate, hit rate at a target multiple, and median/mean return by tier — so you
+can measure whether the filter has an edge and tune thresholds accordingly:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/backtest.mjs [--min-elapsed <h>] [--since <h>] [--target <pct>] [--tier confirmed|headsup|all] [--birdeye] [--json]
+```
+
+Let the watcher accumulate history first (a couple of weeks), then backtest with
+`--min-elapsed` set to your holding period. `--birdeye` (needs `BIRDEYE_API_KEY`)
+adds a peak-return-within-horizon view.
+
 ## Tests
 
-`node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.test.mjs` runs the
-offline pipeline tests (extraction, on-chain normalization, tiering, formatting)
-with no network access.
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.test.mjs   # engine
+node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/backtest.test.mjs  # backtest math
+```
+
+Offline pipeline tests (extraction, on-chain normalization, tiering, formatting,
+history records, backtest stats) with no network access.

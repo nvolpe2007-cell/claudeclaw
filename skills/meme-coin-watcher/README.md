@@ -145,6 +145,43 @@ so a scheduler never treats routine states as failures.
 
 Config is re-read every scan, so edits take effect without a restart.
 
+## Alert history & backtesting
+
+Every fired alert is appended to `.claude/claudeclaw/meme-coin-watcher/alerts.jsonl`
+(one JSON record per line) with an **entry snapshot** — price, market cap,
+liquidity, tier, score, callers, holder count, timestamp. This is the raw
+material for measuring whether the filter actually has an edge.
+
+`backtest.mjs` replays that log: it re-prices each token now via DexScreener,
+computes the return since entry, and reports win rate, hit rate at a target
+multiple, and median/mean return — broken down by tier.
+
+```bash
+# Return-to-now for every logged alert, 2x target (default)
+node skills/meme-coin-watcher/backtest.mjs
+
+# Only alerts at least 24h old, last 7 days, 3x target, confirmed tier only
+node skills/meme-coin-watcher/backtest.mjs --min-elapsed 24 --since 168 --target 200 --tier confirmed
+
+# Peak-return view within 24h of each alert (needs BIRDEYE_API_KEY)
+node skills/meme-coin-watcher/backtest.mjs --birdeye --horizon 24
+```
+
+Flags: `--file <path>`, `--since <hours>`, `--min-elapsed <hours>`,
+`--target <pct>`, `--tier confirmed|headsup|all`, `--birdeye`,
+`--horizon <hours>`, `--dead-as-zero` (count vanished pairs as −100%),
+`--json`, `--limit <n>`, `--verbose`.
+
+**Workflow:** let the watcher run for a couple of weeks to accumulate history,
+then backtest with `--min-elapsed` set to the holding period you care about.
+Use it to tune thresholds — if the confirmed tier's hit rate isn't beating the
+heads-up tier's, the extra gates aren't earning their keep.
+
+> Return-to-now compares the logged entry price to the live price, so run the
+> backtest a while after the alerts fired. `--birdeye` adds the "could you have
+> sold the peak" view using historical OHLCV. Past performance is not
+> predictive — this measures the past, it does not promise the future.
+
 ## Data sources
 
 | Source | Purpose | Cost |
@@ -158,8 +195,8 @@ Config is re-read every scan, so edits take effect without a restart.
 ## Tests
 
 ```bash
-node skills/meme-coin-watcher/watcher.test.mjs
+node skills/meme-coin-watcher/watcher.test.mjs   # engine: extraction, enrichment, tiers, formatting, history
+node skills/meme-coin-watcher/backtest.test.mjs   # backtest math: returns, summary stats
 ```
 
-Offline tests for extraction, on-chain normalization, the two-tier evaluator,
-and formatting — no network required.
+Offline tests — no network required.
