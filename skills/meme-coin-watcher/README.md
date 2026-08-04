@@ -30,9 +30,11 @@ X watchlist (KOLs)  →  extract token refs  →  on-chain enrichment  →  two-
    how many *distinct* accounts called it — velocity/breadth of smart mentions
    matters more than raw volume.
 4. **On-chain enrichment.** Each candidate is resolved on **DexScreener** (free)
-   for liquidity, market cap, volume, age, and buy/sell counts, and checked on
+   for liquidity, market cap, volume, age, and buy/sell counts, checked on
    **RugCheck** (free) for mint authority, LP lock/burn, and top-holder
-   concentration.
+   concentration, and — when a `BIRDEYE_API_KEY` is set — enriched with **Birdeye**
+   holder count and unique-wallet growth. It also self-tracks holder count across
+   scans to derive a holders/hour growth rate without a historical API.
 5. **Two-tier filter** (below).
 6. **Alerting.** New qualifying tokens are posted to your dedicated Telegram bot
    and/or a Discord channel webhook (independent — use either or both). A token
@@ -59,6 +61,10 @@ More alerts, more noise, earliest entries.
 - LP locked or burned (`requireLpLockedOrBurned`)
 - top-10 holder concentration ≤ `maxTop10HolderPct` (bundled/insider check)
 - 24h volume ≥ `minVolume24hUsd`, buy/sell ratio ≥ `minBuySellRatio`
+- **holder-growth momentum** (Birdeye): holder count ≥ `minHolders` and 24h
+  unique-wallet change ≥ `minHolderGrowthPct24h` — is the crowd actually growing,
+  not just one caller's followers aping in. Enforced **only** when a
+  `BIRDEYE_API_KEY` is present; skipped (never a blocker) without one.
 - token age ≤ `maxAgeHours`
 
 Fewer, higher-quality alerts. Every threshold lives in `config.json`.
@@ -89,7 +95,10 @@ safety + momentum, so you can eyeball conviction at a glance.
    - **Discord** *(optional)* — `MEMECOIN_DISCORD_WEBHOOK_URL`. In Discord:
      Channel Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
    - Set Telegram, Discord, both, or neither (neither = print to stdout only).
-   - `BIRDEYE_API_KEY` *(optional)* — reserved for future Birdeye enrichment.
+   - `BIRDEYE_API_KEY` *(optional)* — enables holder-count and holder-growth
+     momentum in the confirmed tier. Get one at
+     [birdeye.so](https://docs.birdeye.so). Without it the watcher still runs;
+     the holder-momentum gates are simply skipped.
 
 3. **Test** (`--dry-run` doesn't write state, so real alerts aren't suppressed):
    ```bash
@@ -143,7 +152,7 @@ Config is re-read every scan, so edits take effect without a restart.
 | twitterapi.io (or any X API) | KOL / cashtag tweets | ~$0.15/1k tweets |
 | DexScreener API | liquidity, MC, volume, age, txns | free |
 | RugCheck API | mint authority, LP lock, holders | free |
-| Birdeye *(optional)* | extra enrichment | free tier / key |
+| Birdeye *(optional)* | holder count + holder-growth momentum | free tier / key |
 | Telegram Bot API / Discord webhook | alert delivery | free |
 
 ## Tests

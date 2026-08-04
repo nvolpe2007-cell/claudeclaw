@@ -13,6 +13,7 @@ import {
   withDefaults,
   telegramConfig,
   discordConfig,
+  holderMomentum,
 } from "./watcher.mjs";
 
 let passed = 0;
@@ -161,6 +162,51 @@ const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
     rug: { mintRevoked: true, lpLockedOrBurned: true, top10Pct: 10, rugged: false },
   };
   assert(evaluate(token, CFG).tier === null, "token older than maxAgeHours rejected");
+}
+
+// --- holderMomentum: self-tracked growth across scans ----------------------
+{
+  const now = Math.floor(Date.now() / 1000);
+  const m = holderMomentum(
+    { holders: 300, holderGrowthPct24h: 25, holderGrowthPct1h: 5 },
+    { holders: 200, holdersAtSec: now - 3600 } // +100 holders over 1h
+  );
+  assert(m.holders === 300, "momentum carries current holder count");
+  assert(m.growthPct24h === 25, "momentum carries Birdeye 24h growth pct");
+  assert(Math.abs(m.selfGrowthPerHour - 100) < 1, "computes self-tracked holders/hr");
+  // no prior reading → no self growth, but Birdeye fields still present
+  const m2 = holderMomentum({ holders: 300, holderGrowthPct24h: 25 }, null);
+  assert(m2.selfGrowthPerHour === null, "no prior reading => null self growth");
+  // no Birdeye at all → all null (no-key case)
+  const m3 = holderMomentum(null, { holders: 200, holdersAtSec: now - 3600 });
+  assert(m3.holders === null && m3.growthPct24h === null, "no birdeye => null momentum");
+}
+
+// --- evaluate: momentum gate blocks a shrinking-holder token ---------------
+{
+  const base = {
+    key: BONK, cashtag: "MOM", accounts: new Set(["ansem", "unipcs"]), mentions: 4,
+    dex: {
+      address: BONK, symbol: "MOM", name: "Mom", liquidityUsd: 50000, marketCap: 500000,
+      volume24hUsd: 90000, ageSec: 3600, buySellRatio: 1.4, buys24h: 300, sells24h: 210,
+      dexUrl: "https://dexscreener.com/solana/x",
+    },
+    rug: { mintRevoked: true, lpLockedOrBurned: true, top10Pct: 20, rugged: false },
+  };
+  // Healthy holder growth => confirmed
+  const good = evaluate({ ...base, momentum: { holders: 800, growthPct24h: 30, selfGrowthPerHour: 40 } }, CFG);
+  assert(good.tier === "confirmed", `growing holders => confirmed (got ${good.tier}: ${good.fails.join("; ")})`);
+  const goodOut = formatAlert({ ...base, momentum: { holders: 800, growthPct24h: 30, selfGrowthPerHour: 40 } }, good);
+  assert(goodOut.includes("Holders: 800") && goodOut.includes("+30% 24h"), "renders holder momentum line");
+  // Shrinking holders (below minHolderGrowthPct24h=0) => blocked from confirmed
+  const shrinking = evaluate({ ...base, momentum: { holders: 800, growthPct24h: -15, selfGrowthPerHour: -5 } }, CFG);
+  assert(shrinking.tier !== "confirmed", "shrinking holders blocked from confirmed tier");
+  // Too few holders (below minHolders=50) => blocked
+  const tiny = evaluate({ ...base, momentum: { holders: 10, growthPct24h: 50 } }, CFG);
+  assert(tiny.tier !== "confirmed", "too-few-holders blocked from confirmed tier");
+  // No Birdeye data (no key) => momentum never blocks; still confirmed
+  const noKey = evaluate({ ...base, momentum: { holders: null, growthPct24h: null, selfGrowthPerHour: null } }, CFG);
+  assert(noKey.tier === "confirmed", "absent momentum data does not block confirmed");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

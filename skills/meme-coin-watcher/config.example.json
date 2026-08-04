@@ -54,7 +54,10 @@
       "requireMintRevoked": true,
       "requireLpLockedOrBurned": true,
       "minVolume24hUsd": 20000,
-      "minBuySellRatio": 0.8
+      "minBuySellRatio": 0.8,
+      "_holder_momentum_note": "Holder-growth momentum via Birdeye (set BIRDEYE_API_KEY). Enforced ONLY when Birdeye returns data — with no key these are skipped, never a blocker. minHolders: floor on holder count. minHolderGrowthPct24h: minimum 24h unique-wallet change % (0 = must not be shrinking).",
+      "minHolders": 50,
+      "minHolderGrowthPct24h": 0
     }
   },
 

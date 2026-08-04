@@ -213,6 +213,10 @@ function withDefaults(c) {
         requireLpLockedOrBurned: f.confirmed?.requireLpLockedOrBurned ?? true,
         minVolume24hUsd: f.confirmed?.minVolume24hUsd ?? 20000,
         minBuySellRatio: f.confirmed?.minBuySellRatio ?? 0.8, // buys/sells over 24h
+        // Holder-growth momentum (Birdeye). Enforced ONLY when a BIRDEYE_API_KEY
+        // is set and returns data — otherwise skipped, never a blocker.
+        minHolders: f.confirmed?.minHolders ?? 50,
+        minHolderGrowthPct24h: f.confirmed?.minHolderGrowthPct24h ?? 0, // % unique-wallet change; 0 = not shrinking
       },
     },
     // Re-alert an already-seen token only if it upgrades tier, or after this cooldown.
@@ -404,6 +408,52 @@ function normalizeRug(d) {
   };
 }
 
+/**
+ * Birdeye token overview (optional — requires BIRDEYE_API_KEY). Provides holder
+ * count and short-window unique-wallet momentum, which the confirmed tier uses
+ * as a "is the crowd actually growing" signal. Returns null when no key / on error.
+ */
+async function birdeyeOverview(address) {
+  const key = process.env.BIRDEYE_API_KEY || "";
+  if (!key) return null;
+  const r = await fetchJson(
+    `https://public-api.birdeye.so/defi/token_overview?address=${address}`,
+    { headers: { "X-API-KEY": key, "x-chain": "solana", accept: "application/json" } }
+  );
+  if (!r.ok) return null;
+  const d = r.data?.data;
+  if (!d || typeof d !== "object") return null;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  return {
+    holders: num(d.holder),
+    uniqueWallet24h: num(d.uniqueWallet24h),
+    // percent change in unique wallets over the last 24h — our holder-growth momentum
+    holderGrowthPct24h: num(d.uniqueWallet24hChangePercent),
+    uniqueWallet1h: num(d.uniqueWallet1h),
+    holderGrowthPct1h: num(d.uniqueWallet1hChangePercent),
+  };
+}
+
+/**
+ * Combine a Birdeye reading with any holder count we recorded for this token on
+ * a previous scan, yielding a self-tracked growth rate that doesn't depend on a
+ * historical API. `prev` is the persisted state entry for the token (or null).
+ */
+function holderMomentum(birdeye, prev) {
+  const holders = birdeye?.holders ?? null;
+  let selfGrowthPerHour = null;
+  if (holders != null && prev?.holders != null && prev?.holdersAtSec) {
+    const dtHours = (nowSec() - prev.holdersAtSec) / 3600;
+    if (dtHours > 0.01) selfGrowthPerHour = (holders - prev.holders) / dtHours;
+  }
+  return {
+    holders,
+    growthPct24h: birdeye?.holderGrowthPct24h ?? null,
+    growthPct1h: birdeye?.holderGrowthPct1h ?? null,
+    selfGrowthPerHour, // holders added per hour, measured across our own scans
+  };
+}
+
 // --------------------------------------------------------------------------
 // Filtering / scoring
 // --------------------------------------------------------------------------
@@ -433,18 +483,24 @@ function evaluate(token, cfg) {
   const distinct = token.accounts.size;
   const liq = dex.liquidityUsd ?? 0;
   const liqMcapRatio = dex.marketCap ? liq / dex.marketCap : null;
+  const mom = token.momentum || null; // holder-growth momentum (Birdeye), may be null
 
   // Score (0-100) — social velocity + liquidity + safety + momentum --------
   let score = 0;
-  score += Math.min(30, distinct * 12); // social breadth
-  score += Math.min(15, token.mentions * 2); // social volume
-  if (liq >= f.minLiquidityUsd) score += 12;
-  if (liqMcapRatio != null && liqMcapRatio >= f.confirmed.minLiqMcapRatio) score += 10;
-  if (rug?.mintRevoked) score += 8;
-  if (rug?.lpLockedOrBurned) score += 8;
-  if (rug?.top10Pct != null && rug.top10Pct <= f.confirmed.maxTop10HolderPct) score += 7;
+  score += Math.min(26, distinct * 11); // social breadth
+  score += Math.min(13, token.mentions * 2); // social volume
+  if (liq >= f.minLiquidityUsd) score += 10;
+  if (liqMcapRatio != null && liqMcapRatio >= f.confirmed.minLiqMcapRatio) score += 9;
+  if (rug?.mintRevoked) score += 7;
+  if (rug?.lpLockedOrBurned) score += 7;
+  if (rug?.top10Pct != null && rug.top10Pct <= f.confirmed.maxTop10HolderPct) score += 6;
   if ((dex.volume24hUsd ?? 0) >= f.confirmed.minVolume24hUsd) score += 5;
   if (dex.buySellRatio != null && dex.buySellRatio >= f.confirmed.minBuySellRatio) score += 5;
+  // Holder-growth momentum (up to 12 pts): 24h unique-wallet change + self-tracked rate.
+  if (mom?.growthPct24h != null && mom.growthPct24h > 0)
+    score += Math.min(8, mom.growthPct24h / 5); // +40% 24h → full 8
+  if (mom?.selfGrowthPerHour != null && mom.selfGrowthPerHour > 0)
+    score += Math.min(4, mom.selfGrowthPerHour / 25); // +100 holders/hr → full 4
   score = Math.min(100, Math.round(score));
 
   // Confirmed (balanced) tier ----------------------------------------------
@@ -463,13 +519,21 @@ function evaluate(token, cfg) {
       cf.push(`24h vol ${fmtUsd(dex.volume24hUsd)} < ${fmtUsd(c.minVolume24hUsd)}`);
     if (dex.buySellRatio != null && dex.buySellRatio < c.minBuySellRatio)
       cf.push(`buy/sell ${dex.buySellRatio.toFixed(2)} < ${c.minBuySellRatio}`);
+    // Holder-growth momentum gates — enforced only when Birdeye data is present,
+    // so users without a BIRDEYE_API_KEY are never blocked by them.
+    if (mom?.holders != null && c.minHolders > 0 && mom.holders < c.minHolders)
+      cf.push(`holders ${mom.holders} < ${c.minHolders}`);
+    if (mom?.growthPct24h != null && c.minHolderGrowthPct24h != null && mom.growthPct24h < c.minHolderGrowthPct24h)
+      cf.push(`holder growth ${mom.growthPct24h.toFixed(0)}% < ${c.minHolderGrowthPct24h}% (24h)`);
 
     if (cf.length === 0) {
       reasons.push(
         `${distinct} KOLs, liq ${fmtUsd(liq)}` +
           (liqMcapRatio != null ? `, liq/mcap ${(liqMcapRatio * 100).toFixed(1)}%` : "") +
           (rug?.mintRevoked ? ", mint revoked" : "") +
-          (rug?.lpLockedOrBurned ? ", LP safe" : "")
+          (rug?.lpLockedOrBurned ? ", LP safe" : "") +
+          (mom?.holders != null ? `, ${mom.holders} holders` : "") +
+          (mom?.growthPct24h != null ? ` (${mom.growthPct24h > 0 ? "+" : ""}${mom.growthPct24h.toFixed(0)}% 24h)` : "")
       );
       return { tier: "confirmed", score, reasons, fails };
     }
@@ -523,6 +587,14 @@ function formatAlert(token, evalResult) {
       rug.top10Pct != null ? `top10 ${rug.top10Pct.toFixed(0)}%` : null,
     ].filter(Boolean);
     lines.push(`Safety: ${safety.join("  ")}`);
+  }
+  const mom = token.momentum;
+  if (mom && (mom.holders != null || mom.growthPct24h != null || mom.selfGrowthPerHour != null)) {
+    const parts = [];
+    if (mom.holders != null) parts.push(`${mom.holders} holders`);
+    if (mom.growthPct24h != null) parts.push(`${mom.growthPct24h > 0 ? "+" : ""}${mom.growthPct24h.toFixed(0)}% 24h`);
+    if (mom.selfGrowthPerHour != null) parts.push(`${mom.selfGrowthPerHour > 0 ? "+" : ""}${mom.selfGrowthPerHour.toFixed(0)}/hr`);
+    lines.push(`Holders: ${parts.join("  ·  ")}`);
   }
   lines.push(`Called by: ${accounts}${moreAccounts} (${token.mentions} mentions)`);
   if (evalResult.reasons.length) lines.push(`Why: ${evalResult.reasons.join("; ")}`);
@@ -642,16 +714,25 @@ async function runScan(args, cfg, state, statePath) {
 
     const address = dex?.address || (cand.kind === "addr" ? cand.key : null);
     let rug = null;
-    if (address && cfg.chain === "solana") rug = await rugCheck(address);
+    let birdeye = null;
+    if (address && cfg.chain === "solana") {
+      rug = await rugCheck(address);
+      birdeye = await birdeyeOverview(address); // null unless BIRDEYE_API_KEY set
+    }
+
+    const tokenKey = address || cand.key;
+    const momentum = holderMomentum(birdeye, state.tokens[tokenKey]);
 
     const token = {
-      key: address || cand.key,
+      key: tokenKey,
       cashtag: cand.cashtag || dex?.symbol || null,
       accounts: cand.accounts,
       mentions: cand.mentions,
       latestSec: cand.latestSec,
       dex,
       rug,
+      birdeye,
+      momentum,
     };
 
     const evalResult = evaluate(token, cfg);
@@ -665,10 +746,16 @@ async function runScan(args, cfg, state, statePath) {
     const upgraded = prev && prev.tier === "headsup" && evalResult.tier === "confirmed";
     const cooled = prev && nowSec() - (prev.lastAlertSec || 0) > cfg.realertCooldownMinutes * 60;
     const isNew = !prev;
+
+    // Carry a holder reading forward for next scan's self-tracked momentum.
+    const freshHolders = token.momentum?.holders ?? null;
+    const holders = freshHolders != null ? freshHolders : prev?.holders ?? null;
+    const holdersAtSec = freshHolders != null ? nowSec() : prev?.holdersAtSec ?? null;
+
     if (!isNew && !upgraded && !cooled) {
       if (args.verbose) log(`dedup ${token.cashtag || token.key} (already ${prev.tier})`);
-      // still refresh last-seen so TTL cleanup keeps it
-      state.tokens[token.key].lastSeenSec = nowSec();
+      // refresh last-seen (TTL) and the holder reading, without re-alerting
+      state.tokens[token.key] = { ...prev, lastSeenSec: nowSec(), holders, holdersAtSec };
       continue;
     }
 
@@ -679,6 +766,8 @@ async function runScan(args, cfg, state, statePath) {
       symbol: token.cashtag || dex?.symbol || null,
       lastAlertSec: nowSec(),
       lastSeenSec: nowSec(),
+      holders,
+      holdersAtSec,
     };
   }
 
@@ -710,6 +799,7 @@ async function runScan(args, cfg, state, statePath) {
       mentions: a.token.mentions,
       dex: a.token.dex,
       rug: a.token.rug,
+      momentum: a.token.momentum,
       reasons: a.evalResult.reasons,
     })),
   };
@@ -798,6 +888,7 @@ export {
   fmtAge,
   telegramConfig,
   discordConfig,
+  holderMomentum,
 };
 
 // Only run the watcher when executed directly (not when imported by a test).

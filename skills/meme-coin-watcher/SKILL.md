@@ -51,8 +51,10 @@ to get a 2-minute cadence without invoking Claude per scan.
 - **✅ Confirmed (balanced):** ≥2 distinct credible callers **and** on-chain
   safety — liquidity floor, liquidity/market-cap ratio band (the single
   most-cited early filter), mint authority revoked, LP locked/burned, top-10
-  holder concentration under a cap, healthy 24h volume and buy/sell ratio, token
-  age under a cap. Fewer, higher-quality alerts.
+  holder concentration under a cap, healthy 24h volume and buy/sell ratio,
+  holder-growth momentum (Birdeye — holder count + 24h unique-wallet growth,
+  enforced only when `BIRDEYE_API_KEY` is set), and token age under a cap. Fewer,
+  higher-quality alerts.
 
 Every threshold is editable in `config.json`. A token re-alerts only when it
 upgrades heads-up → confirmed or after the re-alert cooldown.
@@ -117,8 +119,8 @@ in `.claude/claudeclaw/meme-coin-watcher/config.json`:
 - More/earlier alerts → lower `confirmed.minDistinctAccounts`, lower liquidity
   floors, enable `broadSearch`, or shorten the job schedule.
 - Fewer/safer alerts → raise `confirmed.minDistinctAccounts`, raise
-  `minLiquidityUsd`/`minLiqMcapRatio`/`minVolume24hUsd`, lower
-  `maxTop10HolderPct`.
+  `minLiquidityUsd`/`minLiqMcapRatio`/`minVolume24hUsd`/`minHolders`/
+  `minHolderGrowthPct24h`, lower `maxTop10HolderPct`.
 
 ## Tests
 
