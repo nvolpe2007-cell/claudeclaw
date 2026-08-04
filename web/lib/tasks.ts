@@ -14,6 +14,7 @@
 export type Category =
   | "Make a Friend"
   | "Get Active"
+  | "Outdoors"
   | "Random Kindness"
   | "Be Bold"
   | "Try Something New"
@@ -22,6 +23,7 @@ export type Category =
 export const CATEGORIES: Category[] = [
   "Make a Friend",
   "Get Active",
+  "Outdoors",
   "Random Kindness",
   "Be Bold",
   "Try Something New",
@@ -57,6 +59,24 @@ export const NUDGES: Nudge[] = [
   { text: "Watch a sunrise or sunset somewhere you've never watched one.", category: "Get Active" },
   { text: "Start a mini beach or park cleanup and invite someone to help.", category: "Get Active" },
   { text: "Learn a simple dance move from a video and do it outside.", category: "Get Active" },
+  { text: "Challenge a friend or stranger to a cartwheel contest.", category: "Get Active" },
+  { text: "Do 10 jumping jacks in a public park.", category: "Get Active" },
+
+  // ── Outdoors ──────────────────────────────────────────────────
+  { text: "Make a friend at the beach and jump over the waves together.", category: "Outdoors" },
+  { text: "Ask someone at the beach to teach you to skip a stone.", category: "Outdoors" },
+  { text: "Start a sandcastle and let passersby add to it.", category: "Outdoors" },
+  { text: "Write a friendly message in the sand for the next person to find.", category: "Outdoors" },
+  { text: "Collect five cool shells or rocks and give one to a stranger.", category: "Outdoors" },
+  { text: "Fly a kite and offer someone a turn holding the string.", category: "Outdoors" },
+  { text: "Go barefoot in the sand or grass for ten minutes.", category: "Outdoors" },
+  { text: "Find the best view nearby and share it with someone.", category: "Outdoors" },
+  { text: "Have a picnic in a new park and wave hello to your neighbors.", category: "Outdoors" },
+  { text: "Do an outdoor scavenger hunt: find something red, round, and soft.", category: "Outdoors" },
+  { text: "Build a driftwood or stick sculpture and leave it for others.", category: "Outdoors" },
+  { text: "Watch the waves with a stranger and swap where you're from.", category: "Outdoors" },
+  { text: "Climb to a high spot and shout something joyful.", category: "Outdoors" },
+  { text: "Offer to take a group's beach photo so everyone's in it.", category: "Outdoors" },
 
   // ── Random Kindness ───────────────────────────────────────────
   { text: "Pay for the coffee of the person behind you.", category: "Random Kindness" },

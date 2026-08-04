@@ -17,6 +17,7 @@ enum Tasks {
     enum Category: String, CaseIterable {
         case makeAFriend = "Make a Friend"
         case getActive = "Get Active"
+        case outdoors = "Outdoors"
         case randomKindness = "Random Kindness"
         case beBold = "Be Bold"
         case trySomethingNew = "Try Something New"
@@ -52,6 +53,24 @@ enum Tasks {
         Nudge(text: "Watch a sunrise or sunset somewhere you've never watched one.", category: .getActive),
         Nudge(text: "Start a mini beach or park cleanup and invite someone to help.", category: .getActive),
         Nudge(text: "Learn a simple dance move from a video and do it outside.", category: .getActive),
+        Nudge(text: "Challenge a friend or stranger to a cartwheel contest.", category: .getActive),
+        Nudge(text: "Do 10 jumping jacks in a public park.", category: .getActive),
+
+        // Outdoors
+        Nudge(text: "Make a friend at the beach and jump over the waves together.", category: .outdoors),
+        Nudge(text: "Ask someone at the beach to teach you to skip a stone.", category: .outdoors),
+        Nudge(text: "Start a sandcastle and let passersby add to it.", category: .outdoors),
+        Nudge(text: "Write a friendly message in the sand for the next person to find.", category: .outdoors),
+        Nudge(text: "Collect five cool shells or rocks and give one to a stranger.", category: .outdoors),
+        Nudge(text: "Fly a kite and offer someone a turn holding the string.", category: .outdoors),
+        Nudge(text: "Go barefoot in the sand or grass for ten minutes.", category: .outdoors),
+        Nudge(text: "Find the best view nearby and share it with someone.", category: .outdoors),
+        Nudge(text: "Have a picnic in a new park and wave hello to your neighbors.", category: .outdoors),
+        Nudge(text: "Do an outdoor scavenger hunt: find something red, round, and soft.", category: .outdoors),
+        Nudge(text: "Build a driftwood or stick sculpture and leave it for others.", category: .outdoors),
+        Nudge(text: "Watch the waves with a stranger and swap where you're from.", category: .outdoors),
+        Nudge(text: "Climb to a high spot and shout something joyful.", category: .outdoors),
+        Nudge(text: "Offer to take a group's beach photo so everyone's in it.", category: .outdoors),
 
         // Random Kindness
         Nudge(text: "Pay for the coffee of the person behind you.", category: .randomKindness),

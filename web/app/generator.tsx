@@ -61,7 +61,7 @@ export default function Generator({
           {loading ? "Thinking…" : "🎲 New nudge"}
         </button>
         <Link className="btn btn-primary" href={`/post?task=${encodeURIComponent(task)}`}>
-          I did it — post proof
+          I did it — post my video
         </Link>
       </div>
     </section>

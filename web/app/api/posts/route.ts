@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { task, caption, username, photo } = (body ?? {}) as Record<string, unknown>;
+  const { task, caption, username, video } = (body ?? {}) as Record<string, unknown>;
 
   if (typeof task !== "string" || task.trim() === "") {
     return NextResponse.json({ error: "A task is required." }, { status: 400 });
@@ -28,15 +28,15 @@ export async function POST(request: Request) {
   if (typeof username !== "string" || username.trim() === "") {
     return NextResponse.json({ error: "A username is required." }, { status: 400 });
   }
-  if (typeof photo !== "string" || !photo.startsWith("data:image/")) {
-    return NextResponse.json({ error: "A proof photo is required." }, { status: 400 });
+  if (typeof video !== "string" || !video.startsWith("data:video/")) {
+    return NextResponse.json({ error: "A proof video is required." }, { status: 400 });
   }
 
   const post = await addPost({
     task: task.trim(),
     caption: typeof caption === "string" ? caption.trim() : "",
     username: username.trim(),
-    photo,
+    video,
   });
 
   return NextResponse.json(post, { status: 201 });

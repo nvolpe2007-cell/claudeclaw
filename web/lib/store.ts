@@ -4,8 +4,9 @@ import crypto from "crypto";
 
 // A tiny JSON-file store for the feed. It keeps the prototype runnable with
 // zero external accounts. It is NOT meant for production — concurrent writes
-// aren't transactional and photos are stored inline as base64. Phase 3
-// replaces this whole file with Supabase (Postgres + storage bucket); the
+// aren't transactional and videos are stored inline as base64 (fine for a few
+// short clips locally, not for real users). Phase 3 replaces this whole file
+// with Supabase (Postgres + storage bucket); the
 // Post shape and the two functions below are the seam that makes that swap
 // a drop-in — the API routes call `getPosts()` / `addPost()` and don't care
 // what's behind them.
@@ -15,8 +16,8 @@ export interface Post {
   task: string;
   caption: string;
   username: string;
-  /** Data URL (e.g. "data:image/jpeg;base64,...") for the proof photo. */
-  photo: string;
+  /** Data URL (e.g. "data:video/mp4;base64,...") for the proof video. */
+  video: string;
   createdAt: string; // ISO timestamp
 }
 
@@ -24,7 +25,7 @@ export interface NewPost {
   task: string;
   caption: string;
   username: string;
-  photo: string;
+  video: string;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -60,7 +61,7 @@ export async function addPost(input: NewPost): Promise<Post> {
     task: input.task,
     caption: input.caption,
     username: input.username,
-    photo: input.photo,
+    video: input.video,
     createdAt: new Date().toISOString(),
   };
   posts.push(post);

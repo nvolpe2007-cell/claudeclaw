@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-const MAX_BYTES = 6 * 1024 * 1024; // ~6MB source image cap
+const MAX_BYTES = 30 * 1024 * 1024; // ~30MB source video cap (prototype)
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -18,22 +18,26 @@ export default function PostForm({ task }: { task: string }) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [caption, setCaption] = useState("");
-  const [photo, setPhoto] = useState<string>("");
+  const [video, setVideo] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPickVideo(e: React.ChangeEvent<HTMLInputElement>) {
     setError("");
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith("video/")) {
+      setError("That's not a video — record or pick a short clip.");
+      return;
+    }
     if (file.size > MAX_BYTES) {
-      setError("That photo is a bit large — please pick one under 6MB.");
+      setError("That clip is a bit large — keep it under 30MB (try ~10 seconds).");
       return;
     }
     try {
-      setPhoto(await fileToDataUrl(file));
+      setVideo(await fileToDataUrl(file));
     } catch {
-      setError("Couldn't read that image. Try another one.");
+      setError("Couldn't read that video. Try another one.");
     }
   }
 
@@ -42,14 +46,14 @@ export default function PostForm({ task }: { task: string }) {
     setError("");
 
     if (!username.trim()) return setError("Add a username so people know who nailed it.");
-    if (!photo) return setError("Add a proof photo.");
+    if (!video) return setError("Add a proof video.");
 
     setSubmitting(true);
     try {
       const res = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task, username, caption, photo }),
+        body: JSON.stringify({ task, username, caption, video }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -67,7 +71,7 @@ export default function PostForm({ task }: { task: string }) {
     <form className="form" onSubmit={onSubmit}>
       <div>
         <p className="page-title">Post your proof</p>
-        <p className="page-sub">You did the nudge — show it off.</p>
+        <p className="page-sub">You did the nudge — record it and drop it in the reel.</p>
         <span className="task-chip">✨ {task}</span>
       </div>
 
@@ -84,10 +88,18 @@ export default function PostForm({ task }: { task: string }) {
       </div>
 
       <div className="field">
-        <label htmlFor="photo">Proof photo</label>
-        <input id="photo" type="file" accept="image/*" capture="environment" onChange={onPickPhoto} />
-        <p className="hint">On a phone this opens the camera. Max 6MB.</p>
-        {photo && <img className="preview-img" src={photo} alt="Preview of your proof" />}
+        <label htmlFor="video">Proof video</label>
+        <input
+          id="video"
+          type="file"
+          accept="video/*"
+          capture="environment"
+          onChange={onPickVideo}
+        />
+        <p className="hint">On a phone this opens the camera. Keep it short (~10s), max 30MB.</p>
+        {video && (
+          <video className="preview-video" src={video} controls playsInline muted />
+        )}
       </div>
 
       <div className="field">
@@ -105,7 +117,7 @@ export default function PostForm({ task }: { task: string }) {
 
       <div className="actions">
         <button className="btn btn-primary" type="submit" disabled={submitting}>
-          {submitting ? "Posting…" : "Share to feed"}
+          {submitting ? "Posting…" : "Share to reel"}
         </button>
       </div>
     </form>

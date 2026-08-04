@@ -1,11 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Feed posts store their photo as a base64 data URL in the prototype's
-  // JSON file, so allow larger request/response bodies for Server Actions
-  // and route handlers.
+  // Reel posts store their video as a base64 data URL in the prototype's
+  // JSON file, so allow larger request bodies.
   experimental: {
     serverActions: {
-      bodySizeLimit: "8mb",
+      bodySizeLimit: "40mb",
     },
   },
 };
