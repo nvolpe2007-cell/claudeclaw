@@ -164,6 +164,48 @@ a {
   flex-wrap: wrap;
 }
 
+/* Mood chips */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+
+.chip {
+  border: 1.5px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease;
+}
+
+.chip:hover:not(:disabled) {
+  filter: brightness(0.98);
+  color: var(--ink);
+}
+
+.chip:active {
+  transform: translateY(1px);
+}
+
+.chip-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Forms */
 .form {
   display: flex;

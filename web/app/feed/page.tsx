@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPosts } from "@/lib/store";
+import { categoryOf } from "@/lib/tasks";
 
 // Always render the latest posts from the store.
 export const dynamic = "force-dynamic";
@@ -36,7 +37,10 @@ export default async function FeedPage() {
         <article className="post" key={post.id}>
           <div className="post-head">
             <span className="post-user">@{post.username}</span>
-            <span className="post-time">{timeAgo(post.createdAt)}</span>
+            <span className="post-time">
+              {categoryOf(post.task) ? `${categoryOf(post.task)} · ` : ""}
+              {timeAgo(post.createdAt)}
+            </span>
           </div>
           <div className="post-task">
             <span className="task-chip">✨ {post.task}</span>
