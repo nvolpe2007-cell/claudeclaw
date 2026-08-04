@@ -21,12 +21,16 @@
 //   BIRDEYE_API_KEY               (optional) enables Birdeye enrichment if set
 //   MEMECOIN_TELEGRAM_BOT_TOKEN   (optional) dedicated Telegram bot token — when
 //   MEMECOIN_TELEGRAM_CHAT_ID     (optional) both are set, alerts are posted
-//                                 directly to this chat (only when there ARE
-//                                 alerts; silent otherwise).
+//                                 directly to this chat.
+//   MEMECOIN_DISCORD_WEBHOOK_URL  (optional) Discord channel webhook — when set,
+//                                 alerts are posted to that channel.
 //
-// --watch runs the scan on a loop (default every 120s, or config.poll interval),
-// which is the cheap way to get a 2-minute cadence without invoking Claude each
-// time. Point a dedicated Telegram bot at it via the env vars above.
+// Telegram and Discord are independent: set either, both, or neither. Alerts are
+// posted only when there ARE alerts (or a setup error); routine runs are silent.
+//
+// --watch runs the scan on a loop (default every 120s), the cheap way to get a
+// 2-minute cadence without invoking Claude each time. Point a dedicated Telegram
+// bot and/or a Discord webhook at it via the env vars above.
 //
 // Exit codes: always 0 on a normal run (including "no alerts" and "no API key"),
 // so the scheduler does not treat routine states as errors. Non-zero only on a
@@ -82,6 +86,30 @@ function telegramConfig(cfg) {
   const token = process.env.MEMECOIN_TELEGRAM_BOT_TOKEN || cfg?.telegram?.botToken || "";
   const chatId = process.env.MEMECOIN_TELEGRAM_CHAT_ID || cfg?.telegram?.chatId || "";
   return token && chatId ? { token, chatId } : null;
+}
+
+/** Post a message to a Discord channel via an incoming webhook. Chunks to Discord's 2000 limit. */
+async function discordSend(webhookUrl, text) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += 1900) chunks.push(text.slice(i, i + 1900));
+  for (const chunk of chunks) {
+    // Discord webhooks return 204 No Content on success, so don't parse a body.
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: chunk, flags: 4 }), // flags:4 suppresses link embeds
+      });
+      if (!res.ok) log(`Discord send failed: HTTP ${res.status}`);
+    } catch (e) {
+      log(`Discord send failed: ${e?.message || e}`);
+    }
+  }
+}
+
+function discordConfig(cfg) {
+  const webhookUrl = process.env.MEMECOIN_DISCORD_WEBHOOK_URL || cfg?.discord?.webhookUrl || "";
+  return webhookUrl ? { webhookUrl } : null;
 }
 
 function nowSec() {
@@ -262,8 +290,9 @@ function parseTweetTime(s) {
 // Solana mint addresses are base58, 32-44 chars. This also matches many random
 // tokens, so we validate every candidate against DexScreener before trusting it.
 const SOL_ADDR_RE = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
-const PUMPFUN_RE = /pump\.fun\/(?:coin\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/gi;
-const DEX_LINK_RE = /(?:dexscreener\.com|birdeye\.so|solscan\.io|jup\.ag|photon-sol\.tinyastro\.io)\/[^\s]*?([1-9A-HJ-NP-Za-km-z]{32,44})/gi;
+// pump.fun and letsbonk.fun (which overtook pump.fun for daily Solana launches).
+const LAUNCHPAD_RE = /(?:pump\.fun|letsbonk\.fun|moonshot\.money)\/(?:coin\/|token\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/gi;
+const DEX_LINK_RE = /(?:dexscreener\.com|birdeye\.so|solscan\.io|jup\.ag|photon-sol\.tinyastro\.io|gmgn\.ai|bullx\.io)\/[^\s]*?([1-9A-HJ-NP-Za-km-z]{32,44})/gi;
 const CASHTAG_RE = /\$([A-Za-z][A-Za-z0-9_]{1,14})\b/g;
 
 /** Pull candidate token references out of a tweet. Prefers explicit links / "CA:". */
@@ -271,7 +300,7 @@ function extractCandidates(text) {
   const addrs = new Set();
   const cashtags = new Set();
 
-  for (const m of text.matchAll(PUMPFUN_RE)) addrs.add(m[1]);
+  for (const m of text.matchAll(LAUNCHPAD_RE)) addrs.add(m[1]);
   for (const m of text.matchAll(DEX_LINK_RE)) addrs.add(m[1]);
 
   // Bare base58 blobs — only keep those that look address-like (>=32) and are
@@ -713,11 +742,13 @@ async function emit(result, args, cfg) {
     console.log(result.text);
   }
 
-  const tg = telegramConfig(cfg);
-  // Post to the dedicated bot only when there is something worth sending:
+  // Post to the alert channels only when there is something worth sending:
   // real alerts, or a setup error (so the user learns setup is broken).
-  if (tg && (result.alerts.length > 0 || result.setupError)) {
-    await telegramSend(tg.token, tg.chatId, result.text);
+  if (result.alerts.length > 0 || result.setupError) {
+    const tg = telegramConfig(cfg);
+    if (tg) await telegramSend(tg.token, tg.chatId, result.text);
+    const dc = discordConfig(cfg);
+    if (dc) await discordSend(dc.webhookUrl, result.text);
   }
 }
 
@@ -756,7 +787,18 @@ async function main() {
 
 // Exported for testing. The pipeline stages are pure and can be exercised
 // without network access.
-export { extractCandidates, pickBestPair, normalizeRug, evaluate, formatAlert, withDefaults, fmtUsd, fmtAge };
+export {
+  extractCandidates,
+  pickBestPair,
+  normalizeRug,
+  evaluate,
+  formatAlert,
+  withDefaults,
+  fmtUsd,
+  fmtAge,
+  telegramConfig,
+  discordConfig,
+};
 
 // Only run the watcher when executed directly (not when imported by a test).
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("watcher.mjs")) {

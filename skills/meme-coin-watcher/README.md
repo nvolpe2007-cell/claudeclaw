@@ -13,8 +13,8 @@ screen with, and pushes alerts to a dedicated Telegram bot.
 
 ```
 X watchlist (KOLs)  →  extract token refs  →  on-chain enrichment  →  two-tier filter  →  Telegram
- twitterapi.io           CA / pump.fun /        DexScreener +           heads-up /          dedicated
- (from: search)          $cashtags              RugCheck                confirmed            bot
+ twitterapi.io           CA / pump.fun /        DexScreener +           heads-up /          + Discord
+ (from: search)          letsbonk / $tags       RugCheck                confirmed
 ```
 
 1. **Social signal.** Every ~2 minutes it pulls recent tweets from a curated
@@ -22,8 +22,10 @@ X watchlist (KOLs)  →  extract token refs  →  on-chain enrichment  →  two-
    API). Optionally it can also scan broader crypto-Twitter for pump.fun links
    from high-follower accounts (`broadSearch`, off by default).
 2. **Token extraction.** From each tweet it pulls Solana contract addresses,
-   `pump.fun` / DexScreener / Birdeye / Solscan links, and `$cashtags` (majors
-   like `$SOL`/`$BTC` are ignored).
+   launchpad links (`pump.fun`, `letsbonk.fun`, `moonshot.money`), explorer /
+   chart links (DexScreener, Birdeye, Solscan, GMGN, BullX), and `$cashtags`
+   (majors like `$SOL`/`$BTC` are ignored). As of 2026 LetsBonk overtook pump.fun
+   for daily Solana launches, so both launchpads are covered.
 3. **Aggregation.** It groups mentions per token over a rolling window and counts
    how many *distinct* accounts called it — velocity/breadth of smart mentions
    matters more than raw volume.
@@ -32,9 +34,10 @@ X watchlist (KOLs)  →  extract token refs  →  on-chain enrichment  →  two-
    **RugCheck** (free) for mint authority, LP lock/burn, and top-holder
    concentration.
 5. **Two-tier filter** (below).
-6. **Alerting.** New qualifying tokens are posted to your dedicated Telegram bot.
-   A token re-alerts only when it upgrades heads-up → confirmed, or after the
-   re-alert cooldown. State is persisted so you don't get spammed.
+6. **Alerting.** New qualifying tokens are posted to your dedicated Telegram bot
+   and/or a Discord channel webhook (independent — use either or both). A token
+   re-alerts only when it upgrades heads-up → confirmed, or after the re-alert
+   cooldown. State is persisted so you don't get spammed.
 
 ## The two tiers (why these filters)
 
@@ -78,11 +81,14 @@ safety + momentum, so you can eyeball conviction at a glance.
    - `X_API_KEY` — a third-party X data-provider key. [twitterapi.io](https://twitterapi.io)
      is the cheap default (~$0.15 / 1k tweets). Override the host with
      `X_API_BASE_URL` if you use a different provider.
-   - `MEMECOIN_TELEGRAM_BOT_TOKEN` — a **dedicated** bot from
-     [@BotFather](https://t.me/BotFather).
-   - `MEMECOIN_TELEGRAM_CHAT_ID` — your numeric id (from
-     [@userinfobot](https://t.me/userinfobot)). Send your new bot a message once
+   - **Telegram** *(optional)* — `MEMECOIN_TELEGRAM_BOT_TOKEN` from a
+     **dedicated** bot via [@BotFather](https://t.me/BotFather), and
+     `MEMECOIN_TELEGRAM_CHAT_ID`, your numeric id from
+     [@userinfobot](https://t.me/userinfobot). Send your new bot a message once
      first so it can DM you.
+   - **Discord** *(optional)* — `MEMECOIN_DISCORD_WEBHOOK_URL`. In Discord:
+     Channel Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
+   - Set Telegram, Discord, both, or neither (neither = print to stdout only).
    - `BIRDEYE_API_KEY` *(optional)* — reserved for future Birdeye enrichment.
 
 3. **Test** (`--dry-run` doesn't write state, so real alerts aren't suppressed):
@@ -138,6 +144,7 @@ Config is re-read every scan, so edits take effect without a restart.
 | DexScreener API | liquidity, MC, volume, age, txns | free |
 | RugCheck API | mint authority, LP lock, holders | free |
 | Birdeye *(optional)* | extra enrichment | free tier / key |
+| Telegram Bot API / Discord webhook | alert delivery | free |
 
 ## Tests
 

@@ -21,10 +21,10 @@
   ],
 
   "broadSearch": {
-    "_note": "Optional discovery beyond the watchlist for the aggressive tier. Off by default: noisier and uses more API reads. When on, only tweets from accounts above minFollowers count.",
+    "_note": "Optional discovery beyond the watchlist for the aggressive tier. Off by default: noisier and uses more API reads. When on, only tweets from accounts above minFollowers count. As of 2026 letsbonk.fun overtook pump.fun for daily Solana launches, so the query covers both launchpads.",
     "enabled": false,
     "minFollowers": 8000,
-    "query": "\"pump.fun/coin\""
+    "query": "(\"pump.fun/coin\" OR \"letsbonk.fun\")"
   },
 
   "poll": {
@@ -62,6 +62,11 @@
     "_note": "Dedicated bot for meme-coin alerts. PREFER the env vars MEMECOIN_TELEGRAM_BOT_TOKEN / MEMECOIN_TELEGRAM_CHAT_ID over putting secrets here. If both env vars are set they win. Leave blank to only print to stdout.",
     "botToken": "",
     "chatId": ""
+  },
+
+  "discord": {
+    "_note": "Discord channel alerts via an incoming webhook (Channel Settings > Integrations > Webhooks > New Webhook > Copy Webhook URL). PREFER the env var MEMECOIN_DISCORD_WEBHOOK_URL over putting the URL here. Telegram and Discord are independent — set either, both, or neither.",
+    "webhookUrl": ""
   },
 
   "realertCooldownMinutes": 720,

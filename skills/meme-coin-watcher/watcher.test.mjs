@@ -11,6 +11,8 @@ import {
   evaluate,
   formatAlert,
   withDefaults,
+  telegramConfig,
+  discordConfig,
 } from "./watcher.mjs";
 
 let passed = 0;
@@ -35,6 +37,28 @@ const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
   assert(addrs.includes(BONK), "extracts contract address");
   assert(cashtags.includes("PEPE"), "extracts meme cashtag");
   assert(!cashtags.includes("SOL") && !cashtags.includes("USDC"), "filters major cashtags");
+}
+
+// --- extraction: letsbonk.fun / moonshot launchpad links -------------------
+{
+  const lb = extractCandidates(`aped this on letsbonk.fun/token/${BONK} 🚀`);
+  assert(lb.addrs.includes(BONK), "extracts letsbonk.fun contract address");
+  const ms = extractCandidates(`live on moonshot.money/${BONK}`);
+  assert(ms.addrs.includes(BONK), "extracts moonshot.money contract address");
+}
+
+// --- alert channel config resolution --------------------------------------
+{
+  assert(telegramConfig({}) === null, "no telegram config => null");
+  assert(
+    telegramConfig({ telegram: { botToken: "t", chatId: "c" } })?.token === "t",
+    "resolves telegram from config"
+  );
+  assert(discordConfig({}) === null, "no discord config => null");
+  assert(
+    discordConfig({ discord: { webhookUrl: "https://discord.com/api/webhooks/x/y" } })?.webhookUrl?.includes("webhooks"),
+    "resolves discord webhook from config"
+  );
 }
 
 // --- pickBestPair (DexScreener shape) --------------------------------------

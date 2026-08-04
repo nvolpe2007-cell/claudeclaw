@@ -9,9 +9,10 @@ Run the meme-coin watcher once. Execute exactly this command and nothing else:
 node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.mjs
 ```
 
-The script posts any alerts to its dedicated Telegram bot itself (via the
-MEMECOIN_TELEGRAM_BOT_TOKEN / MEMECOIN_TELEGRAM_CHAT_ID environment variables),
-so you do NOT need to relay its output. Reply with exactly: OK
+The script posts any alerts to its own alert channels itself — Telegram (via
+MEMECOIN_TELEGRAM_BOT_TOKEN / MEMECOIN_TELEGRAM_CHAT_ID) and/or Discord (via
+MEMECOIN_DISCORD_WEBHOOK_URL) — so you do NOT need to relay its output. Reply
+with exactly: OK
 
 Notes:
 - `notify: error` means ClaudeClaw only pings you if the command exits non-zero

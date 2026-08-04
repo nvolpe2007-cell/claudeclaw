@@ -33,11 +33,15 @@ Required env: `X_API_KEY` (a third-party X data-provider key, e.g.
 twitterapi.io). Optional: `X_API_BASE_URL`, `BIRDEYE_API_KEY`. With no key the
 script prints a setup message and exits 0 (never error-spams the scheduler).
 
-For alerts, point a **dedicated** Telegram bot at it (the user wanted a separate
-bot for this): set `MEMECOIN_TELEGRAM_BOT_TOKEN` and `MEMECOIN_TELEGRAM_CHAT_ID`.
-When both are set the script posts alerts directly to that chat — only when
-there ARE alerts, silent otherwise. `--watch` runs the scan on a loop (default
-120s), the cheap way to get a 2-minute cadence without invoking Claude per scan.
+For alerts, point a **dedicated** Telegram bot and/or a **Discord webhook** at it
+(independent — set either, both, or neither):
+- Telegram: `MEMECOIN_TELEGRAM_BOT_TOKEN` + `MEMECOIN_TELEGRAM_CHAT_ID`
+- Discord: `MEMECOIN_DISCORD_WEBHOOK_URL` (Channel Settings → Integrations →
+  Webhooks → New Webhook → Copy Webhook URL)
+
+When configured the script posts alerts directly — only when there ARE alerts,
+silent otherwise. `--watch` runs the scan on a loop (default 120s), the cheap way
+to get a 2-minute cadence without invoking Claude per scan.
 
 ## Two-tier filter (what the traders actually screen for)
 
@@ -64,18 +68,22 @@ upgrades heads-up → confirmed or after the re-alert cooldown.
    with a seed list of well-known Solana meme KOLs, but they should add the
    callers they actually trust and remove any they don't.
 
-2. **Provide the X API key and dedicated Telegram bot.** Ask the user for:
+2. **Provide the X API key and at least one alert channel.** Ask the user for:
    - a third-party X data-provider key (twitterapi.io is the cheap default at
      ~$0.15/1k tweets) → `X_API_KEY`
-   - a dedicated Telegram bot token from `@BotFather` → `MEMECOIN_TELEGRAM_BOT_TOKEN`
-   - their Telegram chat/user id (from `@userinfobot`) → `MEMECOIN_TELEGRAM_CHAT_ID`
+   - **Telegram** (optional): a dedicated bot token from `@BotFather` →
+     `MEMECOIN_TELEGRAM_BOT_TOKEN`, and their chat/user id from `@userinfobot` →
+     `MEMECOIN_TELEGRAM_CHAT_ID`
+   - **Discord** (optional): a channel webhook URL →
+     `MEMECOIN_DISCORD_WEBHOOK_URL`
 
    Put these in the environment that runs the watcher. A simple `.env` the user
    sources works, e.g.:
    ```bash
    export X_API_KEY="..."
-   export MEMECOIN_TELEGRAM_BOT_TOKEN="..."
-   export MEMECOIN_TELEGRAM_CHAT_ID="..."
+   export MEMECOIN_TELEGRAM_BOT_TOKEN="..."   # optional
+   export MEMECOIN_TELEGRAM_CHAT_ID="..."     # optional
+   export MEMECOIN_DISCORD_WEBHOOK_URL="..."  # optional
    ```
 
 3. **Test it** before relying on the schedule (`--dry-run` skips writing state so
