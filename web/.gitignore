@@ -4,5 +4,10 @@
 next-env.d.ts
 *.tsbuildinfo
 
-# Prototype feed data (base64 photos) — don't commit user content
+# Prototype feed data (base64 videos) — don't commit user content
 /data/posts.json
+
+# Secrets — never commit real keys
+.env
+.env.local
+.env*.local

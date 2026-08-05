@@ -42,27 +42,34 @@ app/
             └── comments/      # POST → Comment    (add a comment)
 lib/
 ├── tasks.ts                   # categorized nudge list (mirrors Tasks.swift)
-└── store.ts                   # file-based Post store (the Supabase seam)
+└── store/                     # swappable Post store
+    ├── index.ts               #   picks a backend from env (file ↔ supabase)
+    ├── file.ts                #   local JSON file (default, zero setup)
+    ├── supabase.ts            #   Postgres + video Storage (when configured)
+    └── types.ts               #   shared StoreApi contract
 ```
 
-## Prototype limitations (by design)
+## Backends: file (default) or Supabase
 
-- **Storage** is a JSON file at `data/posts.json`; videos are inlined as
-  base64 data URLs (capped ~30MB/clip). Fine for a few short clips locally,
-  not for production or many users — phase 3 moves videos to object storage.
-- **No auth** — username is just a text field; a browser's "liked" state is
-  kept in `localStorage`, so likes aren't tied to real accounts yet.
-- Feed content isn't moderated yet.
+The store has two interchangeable backends, chosen automatically by env vars:
 
-## Phase 3 — make it real
+- **File store (default, zero setup).** A JSON file at `data/posts.json` with
+  videos inlined as base64 (capped ~30MB/clip). Perfect for local dev; not for
+  real users.
+- **Supabase (production).** Postgres for posts/comments/likes and a Storage
+  bucket for the video files. Set the env vars and the app switches with **no
+  code change** — same API, same UI. Setup: [`supabase/README.md`](./supabase/README.md).
 
-The code is structured so this is a swap, not a rewrite:
+Copy `.env.example` to `.env.local` to configure Supabase; leave it unset for
+the file store.
 
-- **Backend → Supabase.** Replace `lib/store.ts` with Supabase calls
-  (Postgres `posts` table + a Storage bucket for photos). The `getPosts()` /
-  `addPost()` signatures stay the same, so the API routes don't change.
-- **Auth** — add Supabase Auth for real accounts; drop the free-text username.
-- **Shared task list** — move `tasks.ts` into a `tasks` table; the widget's
-  `TaskProvider` and this app both fetch `GET /api/task/random`.
-- **Safety** — add a report button + a moderation pass on new posts.
-- **Deploy** — Vercel hosts the Next.js app; Supabase hosts data + photos.
+## Phase 3 — status
+
+- ✅ **Backend → Supabase.** Implemented as a swappable store
+  (`lib/store/supabase.ts`) + schema (`supabase/schema.sql`). Opt in via env.
+- ⏳ **Auth** — Supabase Auth for real accounts (the `user_id` columns are
+  already in the schema); makes likes one-per-user instead of per-browser.
+- ⏳ **Shared task list** — move `tasks.ts` into a `tasks` table so the widget
+  and web app read one source via `GET /api/task/random`.
+- ⏳ **Safety** — a report button + a moderation pass on new posts.
+- ⏳ **Deploy** — Vercel for the app, Supabase for data + videos.
