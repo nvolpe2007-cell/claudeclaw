@@ -2,3 +2,6 @@
 node_modules
 .codemachine
 AGENTS.md
+
+# Secrets — never commit real env files (the .env.example template is fine)
+.env

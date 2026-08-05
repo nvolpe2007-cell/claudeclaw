@@ -52,7 +52,10 @@ function log(...args) {
 }
 
 function parseArgs(argv) {
-  const args = { config: null, json: false, dryRun: false, verbose: false, watch: false, interval: null };
+  const args = {
+    config: null, json: false, dryRun: false, verbose: false, watch: false,
+    interval: null, check: false, testAlert: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--config") args.config = argv[++i];
@@ -61,6 +64,8 @@ function parseArgs(argv) {
     else if (a === "--verbose" || a === "-v") args.verbose = true;
     else if (a === "--watch") args.watch = true;
     else if (a === "--interval") args.interval = Number(argv[++i]);
+    else if (a === "--check") args.check = true;
+    else if (a === "--test-alert") args.testAlert = true;
   }
   return args;
 }
@@ -878,8 +883,88 @@ async function emit(result, args, cfg) {
   }
 }
 
+/**
+ * Setup doctor: validate env, config, and channels; optionally send a test
+ * alert. Exits non-zero when the essentials (X key + non-empty watchlist +
+ * at least one alert channel) are missing, so deploy scripts can gate on it.
+ */
+async function runCheck(args) {
+  const { config: cfg, path: cfgPath } = await loadConfig(args.config);
+  const x = xProvider();
+  const tg = telegramConfig(cfg);
+  const dc = discordConfig(cfg);
+  const lines = [];
+  const ok = (label, good, detail) => lines.push(`  ${good ? "✅" : "❌"} ${label}${detail ? ` — ${detail}` : ""}`);
+  const info = (label, detail) => lines.push(`  •  ${label}${detail ? ` — ${detail}` : ""}`);
+
+  lines.push("Meme Coin Watcher — setup check\n");
+
+  // Config
+  ok("config.json", !!cfgPath, cfgPath || "not found (using defaults) — copy config.example.json");
+  ok("watchlist", cfg.watchlist.length > 0, `${cfg.watchlist.length} account(s)`);
+
+  // X API key — validate live with a tiny query when possible
+  let xOk = x.hasKey;
+  let xDetail = x.hasKey ? "key present" : "missing X_API_KEY";
+  if (x.hasKey) {
+    const probe = await x.search("(from:jack)", nowSec() - 7 * 24 * 3600);
+    if (!probe.ok) {
+      xOk = false;
+      xDetail = `key present but request failed (${probe.error}) — check the key / provider`;
+    } else {
+      xDetail = "key present and a live query succeeded";
+    }
+  }
+  ok("X API (twitterapi.io)", xOk, xDetail);
+
+  // Channels
+  const anyChannel = !!tg || !!dc;
+  ok("alert channel", anyChannel, anyChannel ? [tg && "Telegram", dc && "Discord"].filter(Boolean).join(" + ") : "none — set Telegram and/or Discord env vars");
+  info("Birdeye momentum", process.env.BIRDEYE_API_KEY ? "enabled" : "disabled (optional — set BIRDEYE_API_KEY)");
+
+  const essentialsOk = xOk && cfg.watchlist.length > 0 && anyChannel;
+
+  // Optional live test alert
+  if (args.testAlert) {
+    lines.push("");
+    if (!anyChannel) {
+      lines.push("  ⚠️ --test-alert skipped: no channel configured.");
+    } else {
+      const sample =
+        "🚨 Meme Coin Watcher — TEST ALERT\n" +
+        "✅ CONFIRMED  $TEST — Test Token  ·  score 88/100\n" +
+        "Liq $42.0K  ·  MC $310K  ·  Vol24h $120K  ·  Age 2h\n" +
+        "Safety: mint✅  LP✅  top10 18%\n" +
+        "Holders: 640  ·  +35% 24h\n" +
+        "If you can read this in your channel, delivery works.";
+      if (tg) { await telegramSend(tg.token, tg.chatId, sample); lines.push("  📨 Test alert sent to Telegram."); }
+      if (dc) { await discordSend(dc.webhookUrl, sample); lines.push("  📨 Test alert sent to Discord."); }
+    }
+  }
+
+  lines.push("");
+  lines.push(essentialsOk ? "READY ✅ — essentials configured. Start with: watcher.mjs --watch" : "NOT READY ❌ — fix the ❌ items above.");
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      ok: essentialsOk,
+      config: cfgPath, watchlist: cfg.watchlist.length,
+      xApi: xOk, telegram: !!tg, discord: !!dc, birdeye: !!process.env.BIRDEYE_API_KEY,
+    }, null, 2));
+  } else {
+    console.log(lines.join("\n"));
+  }
+  return essentialsOk;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.check) {
+    const ready = await runCheck(args);
+    process.exitCode = ready ? 0 : 1;
+    return;
+  }
 
   async function once() {
     // Reload config + state each pass so live edits (thresholds, watchlist) and

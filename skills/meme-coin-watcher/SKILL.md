@@ -88,11 +88,19 @@ upgrades heads-up → confirmed or after the re-alert cooldown.
    export MEMECOIN_DISCORD_WEBHOOK_URL="..."  # optional
    ```
 
-3. **Test it** before relying on the schedule (`--dry-run` skips writing state so
-   the test doesn't suppress the first real alerts):
+3. **Test it** before relying on the schedule. Use the doctor to validate keys,
+   config, and channels (and optionally send a live test alert):
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.mjs --verbose --dry-run
+   node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.mjs --check
+   node ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/watcher.mjs --check --test-alert
    ```
+   Or a full dry scan (`--dry-run` skips writing state so real alerts aren't
+   suppressed): `watcher.mjs --verbose --dry-run`.
+
+   **For a 24/7 VPS deploy**, use the deploy kit instead of wiring this by hand:
+   `cp .env.example .env` (edit it), then
+   `bash ${CLAUDE_PLUGIN_ROOT}/skills/meme-coin-watcher/deploy/setup.sh`. See
+   `deploy/DEPLOY.md`.
 
 4. **Run it on a schedule.** Two options — recommend the first:
    - **Standalone watch loop (recommended, no Claude tokens per scan):**

@@ -106,6 +106,13 @@ safety + momentum, so you can eyeball conviction at a glance.
      node skills/meme-coin-watcher/watcher.mjs --verbose --dry-run
    ```
 
+   Or just verify everything at once with the built-in doctor (validates keys,
+   config, and channels, and can send a live test alert):
+   ```bash
+   node skills/meme-coin-watcher/watcher.mjs --check              # validate setup
+   node skills/meme-coin-watcher/watcher.mjs --check --test-alert # + send a test alert
+   ```
+
 4. **Run on a schedule** — pick one:
    - **Standalone watch loop (recommended):** one long-lived process, no Claude
      tokens per scan.
@@ -144,6 +151,20 @@ so a scheduler never treats routine states as failures.
   `maxTop10HolderPct`.
 
 Config is re-read every scan, so edits take effect without a restart.
+
+## Deploy to a VPS (24/7)
+
+For an always-on setup, use the deploy kit in [`deploy/`](deploy/DEPLOY.md):
+
+```bash
+cp skills/meme-coin-watcher/.env.example skills/meme-coin-watcher/.env   # then edit it
+bash skills/meme-coin-watcher/deploy/setup.sh                            # validates + starts under pm2
+```
+
+[`deploy/DEPLOY.md`](deploy/DEPLOY.md) is a full copy-paste runbook (Node install
+→ clone → keys → run → survive reboots). A systemd unit is included as an
+alternative to pm2. `setup.sh` runs the `--check` doctor and refuses to start
+until the essentials are configured.
 
 ## Alert history & backtesting
 
