@@ -1,0 +1,32 @@
+# systemd unit for the Meme Coin Watcher (alternative to pm2).
+#
+# Install:
+#   1. Edit the placeholders below (User, WorkingDirectory, EnvironmentFile,
+#      ExecStart path). WorkingDirectory is where .claude/ state will live.
+#   2. sudo cp memecoin-watcher.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now memecoin-watcher
+#
+# Logs:   journalctl -u memecoin-watcher -f
+# Status: systemctl status memecoin-watcher
+
+[Unit]
+Description=Meme Coin Watcher (X -> on-chain two-tier alerting)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The user to run as (e.g. your login user, not root).
+User=REPLACE_WITH_USER
+# Working dir = where .claude/claudeclaw/meme-coin-watcher/ lives (repo root).
+WorkingDirectory=/home/REPLACE_WITH_USER/claudeclaw
+# Env file with X_API_KEY, MEMECOIN_TELEGRAM_*, MEMECOIN_DISCORD_WEBHOOK_URL, etc.
+EnvironmentFile=/home/REPLACE_WITH_USER/claudeclaw/skills/meme-coin-watcher/.env
+# Full path to node and the watcher. Adjust the node path if needed (`which node`).
+ExecStart=/usr/bin/node /home/REPLACE_WITH_USER/claudeclaw/skills/meme-coin-watcher/watcher.mjs --watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
