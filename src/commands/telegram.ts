@@ -1,5 +1,5 @@
 import { ensureProjectClaudeMd, run, runUserMessage, compactCurrentSession } from "../runner";
-import { getSettings, loadSettings } from "../config";
+import { getSettings, loadSettings, type TelegramChannelWatchConfig } from "../config";
 import { resetSession, peekSession } from "../sessions";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -83,7 +83,7 @@ interface TelegramMessage {
   message_id: number;
   from?: TelegramUser;
   reply_to_message?: { message_id?: number; from?: TelegramUser };
-  chat: { id: number; type: string };
+  chat: { id: number; type: string; title?: string; username?: string };
   message_thread_id?: number;
   text?: string;
   caption?: string;
@@ -868,6 +868,109 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   }
 }
 
+// --- Channel watcher ---
+
+function channelDisplayName(chat: TelegramMessage["chat"]): string {
+  return chat.title ?? (chat.username ? `@${chat.username}` : String(chat.id));
+}
+
+function channelPostLink(chat: TelegramMessage["chat"], messageId: number): string | null {
+  return chat.username ? `https://t.me/${chat.username}/${messageId}` : null;
+}
+
+function isWatchedChannel(watch: TelegramChannelWatchConfig, chat: TelegramMessage["chat"]): boolean {
+  // Empty list = watch every channel the bot can see.
+  if (watch.channels.length === 0) return true;
+  const idStr = String(chat.id);
+  const username = chat.username?.toLowerCase() ?? null;
+  for (const raw of watch.channels) {
+    const entry = raw.trim().toLowerCase().replace(/^@/, "");
+    if (!entry) continue;
+    if (entry === idStr || entry === idStr.replace(/^-100/, "")) return true;
+    if (username && entry === username) return true;
+  }
+  return false;
+}
+
+async function handleChannelPost(message: TelegramMessage): Promise<void> {
+  const config = getSettings().telegram;
+  const watch = config.channelWatch;
+  if (!watch.enabled) return;
+  if (message.chat.type !== "channel") return;
+
+  if (!isWatchedChannel(watch, message.chat)) {
+    debugLog(`Skip channel post chat=${message.chat.id} reason=not_watched`);
+    return;
+  }
+
+  const { text } = getMessageTextAndEntities(message);
+  const hasImage = Boolean((message.photo && message.photo.length > 0) || isImageDocument(message.document));
+  if (!text.trim() && !hasImage) {
+    debugLog(`Skip channel post chat=${message.chat.id} reason=empty`);
+    return;
+  }
+
+  const notifyChatId = watch.notifyChatId || config.allowedUserIds[0];
+  if (!notifyChatId) {
+    console.warn(
+      "[Telegram] Channel watch: no notifyChatId and no allowedUserIds configured; dropping post"
+    );
+    return;
+  }
+
+  const channelName = channelDisplayName(message.chat);
+  const postLink = channelPostLink(message.chat, message.message_id);
+  const linkLine = postLink ? `\n\n🔗 ${postLink}` : "";
+  console.log(
+    `[${new Date().toLocaleTimeString()}] Telegram channel post from ${channelName} (${message.chat.id})`
+  );
+
+  if (watch.mode === "forward") {
+    const body = text.trim() || (hasImage ? "(image)" : "(no text)");
+    await sendMessage(config.token, notifyChatId, `📣 **${channelName}**\n\n${body}${linkLine}`);
+    return;
+  }
+
+  // summarize mode: process the post through Claude in an isolated per-channel session
+  // so channel activity never pollutes the main DM/group conversation.
+  const threadId = `channel:${message.chat.id}`;
+  const promptParts = [
+    `[Telegram channel watch] New post in channel "${channelName}" (id ${message.chat.id}).`,
+  ];
+  if (postLink) promptParts.push(`Post link: ${postLink}`);
+  if (text.trim()) promptParts.push(`Post content:\n${text}`);
+
+  let imagePath: string | null = null;
+  if (hasImage) {
+    try {
+      imagePath = await downloadImageFromMessage(config.token, message);
+    } catch (err) {
+      console.error(
+        `[Telegram] Failed to download channel image: ${err instanceof Error ? err.message : err}`
+      );
+    }
+  }
+  if (imagePath) {
+    promptParts.push(`Image path: ${imagePath}`);
+    promptParts.push("The post includes an image; inspect it before summarizing.");
+  }
+  promptParts.push(
+    "Summarize this channel post in 1-3 sentences and flag anything that may need my attention. Be concise."
+  );
+
+  try {
+    const result = await run("telegram-channel", promptParts.join("\n"), threadId);
+    if (result.exitCode !== 0) {
+      console.error(`[Telegram] Channel watch run failed (exit ${result.exitCode}): ${result.stderr}`);
+      return;
+    }
+    const summary = (result.stdout || "").trim() || "(no summary)";
+    await sendMessage(config.token, notifyChatId, `📣 **${channelName}**\n\n${summary}${linkLine}`);
+  } catch (err) {
+    console.error(`[Telegram] Channel watch error: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 // --- Callback query handler ---
 
 async function handleCallbackQuery(query: TelegramCallbackQuery): Promise<void> {
@@ -970,6 +1073,12 @@ async function poll(): Promise<void> {
 
   console.log("Telegram bot started (long polling)");
   console.log(`  Allowed users: ${config.allowedUserIds.length === 0 ? "all" : config.allowedUserIds.join(", ")}`);
+  if (config.channelWatch.enabled) {
+    const targets = config.channelWatch.channels.length === 0
+      ? "all admin channels"
+      : config.channelWatch.channels.join(", ");
+    console.log(`  Channel watch: enabled (mode=${config.channelWatch.mode}, channels=${targets})`);
+  }
   if (telegramDebug) console.log("  Debug: enabled");
 
   // Register available skills as bot command menu (non-blocking)
@@ -980,7 +1089,17 @@ async function poll(): Promise<void> {
       const data = await callApi<{ ok: boolean; result: TelegramUpdate[] }>(
         config.token,
         "getUpdates",
-        { offset, timeout: 30, allowed_updates: ["message", "my_chat_member", "callback_query"] }
+        {
+          offset,
+          timeout: 30,
+          allowed_updates: [
+            "message",
+            "channel_post",
+            "edited_channel_post",
+            "my_chat_member",
+            "callback_query",
+          ],
+        }
       );
 
       if (!data.ok || !data.result.length) continue;
@@ -990,15 +1109,20 @@ async function poll(): Promise<void> {
           `Update ${update.update_id} keys=${Object.keys(update).join(",")}`
         );
         offset = update.update_id + 1;
-        const incomingMessages = [
-          update.message,
-          update.edited_message,
-          update.channel_post,
-          update.edited_channel_post,
-        ].filter((m): m is TelegramMessage => Boolean(m));
+        const incomingMessages = [update.message, update.edited_message].filter(
+          (m): m is TelegramMessage => Boolean(m)
+        );
         for (const incoming of incomingMessages) {
           handleMessage(incoming).catch((err) => {
             console.error(`[Telegram] Unhandled: ${err}`);
+          });
+        }
+        const channelPosts = [update.channel_post, update.edited_channel_post].filter(
+          (m): m is TelegramMessage => Boolean(m)
+        );
+        for (const post of channelPosts) {
+          handleChannelPost(post).catch((err) => {
+            console.error(`[Telegram] Channel post unhandled: ${err}`);
           });
         }
         if (update.my_chat_member) {
