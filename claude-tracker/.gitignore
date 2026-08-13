@@ -1,0 +1,9 @@
+node_modules/
+dist/
+server/tracker.db
+server/tracker.db-journal
+server/tracker.db-wal
+server/tracker.db-shm
+__pycache__/
+*.pyc
+.DS_Store
