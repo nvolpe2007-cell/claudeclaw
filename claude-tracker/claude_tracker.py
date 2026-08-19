@@ -92,13 +92,35 @@ def first_run_setup():
     return config
 
 
-def is_claude_process(proc):
+CLAUDE_NAME_TOKENS = ("claude", "claude-code")
+
+
+def _matches_claude(token):
+    base = os.path.basename(token).lower()
+    return base in CLAUDE_NAME_TOKENS or base.startswith("claude-code")
+
+
+def is_claude_process(proc, own_pid):
+    if proc.pid == own_pid:
+        return False
     try:
         name = (proc.name() or "").lower()
-        if "claude" in name:
+        if name in CLAUDE_NAME_TOKENS:
             return True
+
         cmdline = proc.cmdline()
-        if cmdline and any("claude" in part.lower() for part in cmdline):
+        if not cmdline:
+            return False
+
+        # Only trust the invoked executable (argv[0]), not arbitrary
+        # arguments/paths, so a file or flag that merely mentions "claude"
+        # doesn't trigger a false positive.
+        if _matches_claude(cmdline[0]):
+            return True
+
+        # `node /path/to/claude ...` and similar interpreter-launched
+        # binaries: check the first non-flag argument after the interpreter.
+        if len(cmdline) > 1 and _matches_claude(cmdline[1]):
             return True
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return False
@@ -106,8 +128,9 @@ def is_claude_process(proc):
 
 
 def any_claude_running():
+    own_pid = os.getpid()
     for proc in psutil.process_iter(["pid", "name"]):
-        if is_claude_process(proc):
+        if is_claude_process(proc, own_pid):
             return True
     return False
 
